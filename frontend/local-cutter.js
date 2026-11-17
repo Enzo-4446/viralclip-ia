@@ -1,22 +1,25 @@
 import {zipSync} from 'fflate';
 
 // Native media pipeline: no WASM, remote encoder or video upload.
-export function planSegments(total,{mode,count,clipDuration,start,duration}) {
+export function planSegments(total,{mode,count,clipDuration,start=0,end,duration}) {
   if (!Number.isFinite(total)||total<=0) throw Error('Não foi possível determinar a duração do vídeo.');
   if (!['single','batch'].includes(mode)) throw Error('Modo de corte inválido.');
   const length=Number(mode==='single'?duration:clipDuration);
-  const first=mode==='single'?Number(start):0;
+  const first=Number(start);
+  const last=end==null||end===''?total:Number(end);
+  if(!Number.isFinite(last)||last<=first||last>total)throw Error('O final deve ser maior que o início e não ultrapassar a duração do vídeo.');
+  const available=last-first;
   if (!Number.isFinite(length)||length<=0) throw Error('Escolha uma duração maior que zero.');
   if (!Number.isFinite(first)||first<0||first>=total) throw Error('O início está fora da duração do vídeo.');
   const limit=mode==='single'?1:Number(count);
   if (!Number.isInteger(limit)||limit<1||limit>10) throw Error('Escolha de 1 a 10 clipes.');
   // Honor the requested count. Short sources are divided into shorter, distinct clips.
-  const step=mode==='batch'?Math.min(length,total/limit):length;
+  const step=mode==='batch'?Math.min(length,available/limit):length;
   if(mode==='batch'&&step<.5)throw Error('Vídeo muito curto para '+limit+' clipes. Reduza a quantidade.');
   const segments=[];
   for(let i=0;i<limit;i++) {
     const offset=first+i*step;
-    segments.push({start:offset,length:Math.min(step,total-offset)});
+    segments.push({start:offset,length:Math.min(step,last-offset)});
   }
   return segments;
 }
@@ -101,7 +104,7 @@ export async function cutLocally(file,options,status=()=>{},signal=new AbortCont
     video.src=url;video.load();await ready;
     const segments=planSegments(video.duration,options);
     const shortened=options.mode==='batch'&&segments[0].length<Number(options.clipDuration)-.01;
-    const report=message=>status((shortened?'Vídeo de '+video.duration.toFixed(1)+'s: '+segments.length+' clipes de aproximadamente '+segments[0].length.toFixed(1)+'s (ajustados para não repetir trechos). ':'')+message);
+    const report=message=>status((shortened?'Intervalo selecionado de '+((options.end==null||options.end===''?video.duration:Number(options.end))-Number(options.start||0)).toFixed(1)+'s: '+segments.length+' clipes de aproximadamente '+segments[0].length.toFixed(1)+'s (ajustados para não repetir trechos). ':'')+message);
     // Limit recording to 1080p to avoid excessive encoder memory on mobile.
     const scale=Math.min(1,1080/Math.max(video.videoWidth,video.videoHeight));
     canvas.width=Math.max(2,Math.round(video.videoWidth*scale/2)*2);
