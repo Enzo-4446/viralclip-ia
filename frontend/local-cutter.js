@@ -49,7 +49,7 @@ async function recordSegment(video,canvas,stream,segment,format,status,index,tot
     await seek;
   }
   const ctx=canvas.getContext('2d',{alpha:false});
-  ctx.drawImage(video,0,0,canvas.width,canvas.height);drawWatermark(ctx,canvas.width,canvas.height,watermarkText);
+  ctx.drawImage(video,0,0,canvas.width,canvas.height);drawWatermark(ctx,canvas.width,canvas.height,watermarkText,video.currentTime);
   const recorder=new MediaRecorder(stream,{mimeType:format.mimeType,videoBitsPerSecond:5000000,audioBitsPerSecond:128000});
   const chunks=[];
   return new Promise((resolve,reject)=>{
@@ -63,7 +63,7 @@ async function recordSegment(video,canvas,stream,segment,format,status,index,tot
     recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
     recorder.onerror=e=>fail(e.error||Error('Falha na gravação local.'));
     recorder.onstop=()=>{const blob=new Blob(chunks,{type:recorder.mimeType});finish(failure||(!blob.size?Error('O navegador gerou um clipe vazio.'):null),blob);};
-    const draw=()=>{if(settled||recorder.state==='inactive')return;ctx.drawImage(video,0,0,canvas.width,canvas.height);drawWatermark(ctx,canvas.width,canvas.height,watermarkText);frame=requestAnimationFrame(draw);};
+    const draw=()=>{if(settled||recorder.state==='inactive')return;ctx.drawImage(video,0,0,canvas.width,canvas.height);drawWatermark(ctx,canvas.width,canvas.height,watermarkText,video.currentTime);frame=requestAnimationFrame(draw);};
     video.addEventListener('ended',stop);video.addEventListener('error',bad);signal.addEventListener('abort',abort,{once:true});
     timer=setInterval(()=>{
       const elapsed=Math.max(0,video.currentTime-segment.start);

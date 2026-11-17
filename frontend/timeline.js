@@ -1,7 +1,7 @@
 import {drawWatermark} from './watermark.js';
 export function mountTimeline({preview,root,mode,duration,start,end,watermark,brand,engine,generate}) {
   const $=id=>root.querySelector('#'+id);
-  let video=null,total=0,selected=10,queue=[],busy=false,playing=false;
+  let video=null,total=0,selected=10,queue=[],busy=false,playing=false,animationFrame=null;
   const overlay=document.createElement('canvas');overlay.className='watermark-overlay';
   const local=()=>engine.value==='local';
   const length=()=>Number(duration.value);
@@ -14,7 +14,11 @@ export function mountTimeline({preview,root,mode,duration,start,end,watermark,br
     overlay.width=Math.round(video.videoWidth*scale);overlay.height=Math.round(video.videoHeight*scale);
     overlay.style.width=overlay.width+'px';overlay.style.height=overlay.height+'px';
     overlay.hidden=!watermark.checked||!local();
-    drawWatermark(overlay.getContext('2d'),overlay.width,overlay.height,brand.value);
+    drawWatermark(overlay.getContext('2d'),overlay.width,overlay.height,brand.value,video.currentTime);
+  }
+  function animateMark(){
+    cancelAnimationFrame(animationFrame);paintMark();
+    if(video&&!video.paused&&!video.ended)animationFrame=requestAnimationFrame(animateMark);
   }
   function render(){
     root.hidden=!local()||mode.value!=='single'||!video;
@@ -42,8 +46,8 @@ export function mountTimeline({preview,root,mode,duration,start,end,watermark,br
   function choose(value,seek=true){if(busy||!video)return;selected=Number(value);render();if(seek&&max()>=10){playing=false;video.pause();video.currentTime=selected;}}
   function bindVideo(){
     const next=preview.querySelector('video');if(next===video)return;
-    video?.pause();video=next;queue=[];playing=false;total=0;selected=10;
-    if(video){const ready=()=>{total=video.duration;selected=10;render();if(max()>=10)video.currentTime=selected;};video.addEventListener('loadedmetadata',ready);video.addEventListener('timeupdate',()=>{if(playing&&video.currentTime>=selected+length()){video.pause();playing=false;}});if(video.readyState>=1)ready();preview.append(overlay);}else overlay.remove();render();
+    cancelAnimationFrame(animationFrame);video?.pause();video=next;queue=[];playing=false;total=0;selected=10;
+    if(video){const ready=()=>{total=video.duration;selected=10;render();if(max()>=10)video.currentTime=selected;};video.addEventListener('loadedmetadata',ready);video.addEventListener('play',animateMark);video.addEventListener('pause',paintMark);video.addEventListener('seeked',paintMark);video.addEventListener('timeupdate',()=>{if(playing&&video.currentTime>=selected+length()){video.pause();playing=false;}});if(video.readyState>=1)ready();preview.append(overlay);}else overlay.remove();render();
   }
   $('selectionStart').oninput=e=>choose(e.target.value);
   let dragging=false,anchor=0;
