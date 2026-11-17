@@ -1,3 +1,4 @@
+import {cutLocally} from './local-cutter.js';
 import {unzipSync} from 'fflate';
 import {createClient} from '@supabase/supabase-js';
 const env=import.meta.env;
@@ -19,8 +20,9 @@ const credentials=()=>{const email=$('email').value.trim(),password=$('password'
 $('signin').onclick=async()=>{const values=credentials();if(!values)return;$('authStatus').textContent='Entrando...';try{const {error}=await sb.auth.signInWithPassword(values);$('authStatus').textContent=error?.message||'Autenticado';if(!error)await refresh()}catch(e){$('authStatus').textContent=e.message}};
 $('signup').onclick=async()=>{const values=credentials();if(!values)return;$('authStatus').textContent='Criando conta...';try{const {error}=await sb.auth.signUp({...values,options:{emailRedirectTo:authRedirectUrl}});$('authStatus').textContent=error?.message||'Conta criada. Verifique seu e-mail se a confirmação estiver habilitada.';if(!error)await refresh()}catch(e){$('authStatus').textContent=e.message}};
 $('signout').onclick=async()=>{await sb.auth.signOut();await refresh()};
-let sourceMode='youtube';let localPreviewUrl=null;let importedYoutubeFile=null;
-const setSourceMode=mode=>{sourceMode=mode;$('youtubePanel').hidden=mode!=='youtube';$('uploadPanel').hidden=mode!=='upload';$('tabYoutube').classList.toggle('active',mode==='youtube');$('tabUpload').classList.toggle('active',mode==='upload');$('status').textContent='';$('download').hidden=true;const engine=$('processingEngine');if(engine){engine.disabled=mode==='youtube';$('localNote').textContent=mode==='youtube'?'Links do YouTube usam o servidor. Para corte local, envie um arquivo MP4 do computador.':engine.value==='local'?'Corte local: seu computador processa o MP4 sem enviar o arquivo ao Render.':'Edição avançada: o vídeo será enviado ao servidor Render.';}updateGenerateState()};
+let localBusy=false,localController=null;
+let sourceMode='upload';let localPreviewUrl=null;let importedYoutubeFile=null;
+const setSourceMode=mode=>{if(localBusy)return;sourceMode=mode;$('youtubePanel').hidden=mode!=='youtube';$('uploadPanel').hidden=mode!=='upload';$('tabYoutube').classList.toggle('active',mode==='youtube');$('tabUpload').classList.toggle('active',mode==='upload');$('status').textContent='';$('download').hidden=true;const engine=$('processingEngine');if(engine){engine.disabled=mode==='youtube';$('localNote').textContent=mode==='youtube'?'Links do YouTube usam o servidor. Para corte local, envie um arquivo MP4 do computador.':engine.value==='local'?'Corte local: seu computador processa o MP4 sem enviar o arquivo ao Render.':'Edição avançada: o vídeo será enviado ao servidor Render.';}updateGenerateState()};
 $('tabYoutube').onclick=()=>setSourceMode('youtube');$('tabUpload').onclick=()=>setSourceMode('upload');
 const youtubeId=url=>{try{const u=new URL(url);const h=u.hostname.toLowerCase();if(h==='youtu.be'||h==='www.youtu.be')return u.pathname.split('/')[1]?.match(/^[a-zA-Z0-9_-]{11}$/)?.[0]||null;if(['youtube.com','www.youtube.com','m.youtube.com','music.youtube.com'].includes(h)){const id=u.pathname==='/watch'?u.searchParams.get('v'):u.pathname.match(/^\/(?:shorts|live|embed)\/([a-zA-Z0-9_-]{11})/)?.[1];return id&&/^[a-zA-Z0-9_-]{11}$/.test(id)?id:null}}catch{}return null};
 $('inspectYoutube').onclick=()=>{const id=youtubeId($('youtubeUrl').value.trim());if(!id){$('youtubeInfo').textContent='Link inválido. Cole uma URL de vídeo, Shorts ou live do YouTube.';return}if(localPreviewUrl){URL.revokeObjectURL(localPreviewUrl);localPreviewUrl=null}const iframe=document.createElement('iframe');iframe.src='https://www.youtube-nocookie.com/embed/'+encodeURIComponent(id);iframe.title='Prévia do YouTube';iframe.allow='accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture';iframe.allowFullscreen=true;iframe.style.cssText='width:100%;height:100%;border:0';$('videoPreview').replaceChildren(iframe);$('youtubeInfo').textContent='Vídeo identificado: '+id+'. Prévia disponível quando o YouTube permitir incorporação. Para gerar, confirme os direitos de edição e escolha suas configurações. A disponibilidade depende das restrições do YouTube.'};
@@ -28,35 +30,39 @@ $('file').onchange=()=>{importedYoutubeFile=null;const file=$('file').files[0];i
 const localEngine=()=>$('processingEngine').value==='local';
 $('processingEngine').onchange=()=>{
   const local=localEngine();
-  $('localNote').textContent=local?'O MP4 fica no seu dispositivo. Sem API, sem envio ao Render. Mantém resolução e proporção originais; não adiciona legendas, marca ou efeitos.':'Edição avançada usa o Render e permite enquadramento vertical, marca e legendas quando configuradas.';
-  updateGenerateState();
+  for(const id of ['watermark','brand','aspect','quality','fps','crf','framing','captions','captionLanguage','captionStyle','recordVoice','voiceFile','ducking','originalVolume','duckDb','releaseMs'])$(id).disabled=local;
+  $('settingsSummary').textContent=local?'Corte local: áudio e vídeo, até 1080p e 30 FPS, proporção original. MP4 ou WebM conforme o navegador.':'Edição pelo servidor selecionada.';
+  $('localNote').textContent=local?'Vídeo e áudio processados neste dispositivo, sem upload ou API. Exportação em tempo real, até 1080p/30 FPS, proporção original. MP4 ou WebM conforme o navegador. Mantenha esta aba visível.':'Edição avançada usa o Render e permite enquadramento vertical, marca e legendas quando configuradas.';
 };
 async function generateLocal(f,title,session){
   const status=message=>$('status').textContent=message;
-  $('generate').disabled=true;
+  if(localBusy)return;
+  localBusy=true;localController=new AbortController();
+  $('cancelLocal').hidden=false;
+  updateGenerateState();
   try{
-    const {cutLocally}=await import('./local-cutter.js');
-    const result=await cutLocally(f,{mode:$('mode').value,count:Number($('count').value),clipDuration:Number($('clipDuration').value),start:Number($('start').value),duration:Number($('duration').value)},status);
+    const result=await cutLocally(f,{mode:$('mode').value,count:Number($('count').value),clipDuration:Number($('clipDuration').value),start:Number($('start').value),duration:Number($('duration').value)},status,localController.signal);
     clearResults();
     for(const item of result.files){
-      const blob=new Blob([item.bytes],{type:'video/mp4'});
+      const blob=item.blob;
       const url=URL.createObjectURL(blob);resultUrls.push(url);
       const card=document.createElement('div'),video=document.createElement('video'),p=document.createElement('p'),link=document.createElement('a');
       video.src=url;video.controls=true;video.playsInline=true;video.preload='metadata';
-      p.textContent=item.name;link.href=url;link.download=item.name;link.textContent='Baixar MP4';
+      p.textContent=item.name;link.href=url;link.download=item.name;link.textContent='Baixar '+result.extension.toUpperCase();
       card.className='result-card';card.append(video,p,link);$('results').append(card);
     }
     const url=URL.createObjectURL(result.blob);resultUrls.push(url);
-    $('download').href=url;$('download').download=result.zip?'viralclip_cortes.zip':'viralclip.mp4';
-    $('download').textContent=result.zip?'Baixar todos em ZIP':'Baixar MP4';$('download').hidden=false;
+    $('download').href=url;$('download').download=result.zip?'viralclip_cortes.zip':'viralclip.'+result.extension;
+    $('download').textContent=result.zip?'Baixar todos em ZIP':'Baixar '+result.extension.toUpperCase();$('download').hidden=false;
     status(result.files.length+' clipe(s) gerado(s) localmente, sem enviar o vídeo ao servidor.');
     const {error}=await sb.from('clip_projects').insert({user_id:session.user.id,title,watermark_text:'',rights_confirmed:true,source_kind:'upload'});
     if(error)console.warn('Histórico:',error.message);
     await loadProjects();
-  }catch(e){status('Corte local não concluído: '+(e?.message||String(e)||'erro desconhecido')+'. Verifique o console (F12) para detalhes.');console.error(e)}
-  finally{updateGenerateState()}
+  }catch(e){status('Corte local não concluído: '+(e?.message||String(e)||'erro desconhecido')+'');console.error(e)}
+  finally{localBusy=false;localController=null;$('cancelLocal').hidden=true;updateGenerateState()}
 }
-$('generate').onclick=async()=>{const f=$('file').files[0]||importedYoutubeFile;if(sourceMode==='upload'&&!f){$('status').textContent='Selecione um vídeo.';return}if(sourceMode==='youtube'&&!youtubeId($('youtubeUrl').value.trim())){$('status').textContent='Cole um link válido do YouTube.';return}if(sourceMode==='youtube'&&!$('rights').checked){$('status').textContent='Confirme que você tem autorização para editar o vídeo.';return}const {data:{session}}=await sb.auth.getSession();if(!session){$('status').textContent='Faça login novamente.';return}const brand=$('brand').value.trim(),title=$('title').value.trim();if(sourceMode==='upload'&&localEngine()){if(!title){$('status').textContent='Informe o título do projeto.';return}await generateLocal(f,title,session);return}if(!api){$('status').textContent='Servidor FFmpeg indisponível.';return}if(!title||($('watermark').checked&&!brand)){$('status').textContent='Informe título e, se ativada, a marca.';return}if($('captions').checked){try{const capsResponse=await fetch(api+'/capabilities',{headers:{Authorization:'Bearer '+session.access_token}});if(capsResponse.ok){const caps=await capsResponse.json();if(!caps.captions){$('status').textContent='O servidor não possui transcrição configurada. Desative Legendas automáticas para gerar o vídeo.';return}}}catch(e){console.warn('Capacidades indisponíveis',e)}}if(sourceMode==='youtube'){
+$('cancelLocal').onclick=()=>localController?.abort();
+$('generate').onclick=async()=>{if(localBusy)return;const f=$('file').files[0]||importedYoutubeFile;if(sourceMode==='upload'&&!f){$('status').textContent='Selecione um vídeo.';return}if(sourceMode==='youtube'&&!youtubeId($('youtubeUrl').value.trim())){$('status').textContent='Cole um link válido do YouTube.';return}if(sourceMode==='youtube'&&!$('rights').checked){$('status').textContent='Confirme que você tem autorização para editar o vídeo.';return}const {data:{session}}=await sb.auth.getSession();if(!session){$('status').textContent='Faça login novamente.';return}const brand=$('brand').value.trim(),title=$('title').value.trim();if(sourceMode==='upload'&&localEngine()){if(!title){$('status').textContent='Informe o título do projeto.';return}await generateLocal(f,title,session);return}if(!api){$('status').textContent='Servidor FFmpeg indisponível.';return}if(!title||($('watermark').checked&&!brand)){$('status').textContent='Informe título e, se ativada, a marca.';return}if($('captions').checked){try{const capsResponse=await fetch(api+'/capabilities',{headers:{Authorization:'Bearer '+session.access_token}});if(capsResponse.ok){const caps=await capsResponse.json();if(!caps.captions){$('status').textContent='O servidor não possui transcrição configurada. Desative Legendas automáticas para gerar o vídeo.';return}}}catch(e){console.warn('Capacidades indisponíveis',e)}}if(sourceMode==='youtube'){
   $('generate').disabled=true;
   $('status').textContent='Verificando se o servidor consegue acessar o vídeo antes de criar o projeto...';
   try{
@@ -108,7 +114,7 @@ $('recordVoice').onclick=async()=>{try{if(!navigator.mediaDevices?.getUserMedia|
 $('stopVoice').onclick=()=>{if(voiceRecorder?.state==='recording')voiceRecorder.stop()};
 $('voiceFile').onchange=()=>{const f=$('voiceFile').files[0];if(!f)return;setVoicePreview(f);$('voiceStatus').textContent='Narração importada: '+f.name};
 const editorFields=['quality','fps','crf','framing','captions','captionLanguage','captionStyle','ducking','originalVolume','duckDb','releaseMs'];
-const updateEditor=()=>{const captions=$('captions').checked;$('captionLanguage').disabled=!captions;$('captionStyle').disabled=!captions;$('duckDb').disabled=!$('ducking').checked||!voiceBlob;$('releaseMs').disabled=!$('ducking').checked||!voiceBlob;$('settingsSummary').textContent='Configuração desejada: '+$('quality').value+'p · '+$('fps').value+' FPS · '+(captions?'legendas '+$('captionLanguage').value:'sem legendas')+' · '+($('ducking').checked?'ducking ligado':'ducking desligado')+'. Configurações enviadas ao renderizador.'};
+const updateEditor=()=>{if(localEngine()){$('processingEngine').onchange();return}const captions=$('captions').checked;$('captionLanguage').disabled=!captions;$('captionStyle').disabled=!captions;$('duckDb').disabled=!$('ducking').checked||!voiceBlob;$('releaseMs').disabled=!$('ducking').checked||!voiceBlob;$('settingsSummary').textContent='Configuração desejada: '+$('quality').value+'p · '+$('fps').value+' FPS · '+(captions?'legendas '+$('captionLanguage').value:'sem legendas')+' · '+($('ducking').checked?'ducking ligado':'ducking desligado')+'. Configurações enviadas ao renderizador.'};
 editorFields.forEach(id=>$(id).addEventListener('change',updateEditor));updateEditor();
 
 let resultUrls=[];
@@ -117,7 +123,7 @@ $('watermark').addEventListener('change',()=>{$('brand').disabled=!$('watermark'
 $('count').addEventListener('change',updateEditor);$('clipDuration').addEventListener('change',updateEditor);$('aspect').addEventListener('change',updateEditor);
 const oldModeChange=$('mode').onchange;$('mode').onchange=()=>{oldModeChange();$('count').disabled=$('mode').value==='single';$('clipDuration').disabled=$('mode').value==='single';clearResults()};$('mode').onchange();
 
-const updateGenerateState=()=>{const yt=sourceMode==='youtube';$('manualFields').hidden=yt||$('mode').value!=='single';const ready=yt?Boolean(youtubeId($('youtubeUrl').value.trim())&&$('rights').checked):Boolean($('file').files[0]||importedYoutubeFile);$('generate').disabled=!ready;$('generate').title=ready?'Gerar vídeos com as configurações escolhidas':yt?'Informe um link e confirme os direitos de edição':'Selecione um vídeo';$('generate').textContent=yt?'Gerar clipes':$('mode').value==='batch'?'Gerar clipes':'Gerar MP4';$('mode').disabled=yt;$('recordVoice').disabled=yt;$('voiceFile').disabled=yt;$('count').disabled=!yt&&$('mode').value==='single';$('clipDuration').disabled=!yt&&$('mode').value==='single';};
+const updateGenerateState=()=>{for(const id of ['file','processingEngine','tabYoutube','tabUpload','mode','count','clipDuration','start','duration'])$(id).disabled=localBusy;const yt=sourceMode==='youtube';$('manualFields').hidden=yt||$('mode').value!=='single';const ready=yt?Boolean(youtubeId($('youtubeUrl').value.trim())&&$('rights').checked):Boolean($('file').files[0]||importedYoutubeFile);$('generate').disabled=localBusy||!ready;$('generate').title=ready?'Gerar vídeos com as configurações escolhidas':yt?'Informe um link e confirme os direitos de edição':'Selecione um vídeo';$('generate').textContent=yt?'Gerar clipes':$('mode').value==='batch'?'Gerar clipes':'Gerar MP4';$('mode').disabled=localBusy||yt;$('recordVoice').disabled=yt||localBusy||localEngine();$('voiceFile').disabled=yt||localBusy||localEngine();$('count').disabled=localBusy||!yt&&$('mode').value==='single';$('clipDuration').disabled=localBusy||!yt&&$('mode').value==='single';};
 $('youtubeUrl').addEventListener('input',updateGenerateState);$('rights').addEventListener('change',updateGenerateState);$('file').addEventListener('change',updateGenerateState);$('mode').addEventListener('change',updateGenerateState);updateGenerateState();
 
 
@@ -216,3 +222,6 @@ $('clearProjects').onclick=async()=>{
   }catch(error){$('historyStatus').textContent='Falha ao limpar histórico: '+error.message}
   finally{button.disabled=false}
 };
+
+
+setSourceMode('upload');$('processingEngine').onchange();

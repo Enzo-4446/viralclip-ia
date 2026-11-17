@@ -6,15 +6,13 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --test local-cutter.test.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.57.0",
     "vite": "7.1.7",
-    "fflate": "0.8.2",
-    "@ffmpeg/ffmpeg": "0.12.15",
-    "@ffmpeg/util": "0.12.2",
-    "@ffmpeg/core": "0.12.10"
+    "fflate": "0.8.2"
   },
   "devDependencies": {}
 }

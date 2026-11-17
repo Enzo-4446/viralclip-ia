@@ -1,69 +1,134 @@
-import {FFmpeg} from '@ffmpeg/ffmpeg';
-import coreURL from '@ffmpeg/core/dist/umd/ffmpeg-core.js?url';
-import wasmURL from '@ffmpeg/core/dist/umd/ffmpeg-core.wasm?url';
 import {zipSync} from 'fflate';
 
-let engine;
-async function getEngine(status) {
-  if (engine?.loaded) return engine;
-  const ffmpeg = new FFmpeg();
-  ffmpeg.on('log', ({message}) => { if (/error|failed/i.test(message)) console.warn('[ffmpeg local]',message); });
-  status('Carregando motor de corte no navegador (primeira execução)...');
-  try {
-    await ffmpeg.load({coreURL:new URL(coreURL,location.href).href,wasmURL:new URL(wasmURL,location.href).href});
-  } catch (error) {
-    console.error('FFmpeg local initialization failed',error);
-    throw new Error('Não foi possível iniciar o motor local: '+(error?.message||String(error)||'falha desconhecida'));
+// Native media pipeline: no WASM, remote encoder or video upload.
+export function planSegments(total,{mode,count,clipDuration,start,duration}) {
+  if (!Number.isFinite(total)||total<=0) throw Error('Não foi possível determinar a duração do vídeo.');
+  if (!['single','batch'].includes(mode)) throw Error('Modo de corte inválido.');
+  const length=Number(mode==='single'?duration:clipDuration);
+  const first=mode==='single'?Number(start):0;
+  if (!Number.isFinite(length)||length<=0) throw Error('Escolha uma duração maior que zero.');
+  if (!Number.isFinite(first)||first<0||first>=total) throw Error('O início está fora da duração do vídeo.');
+  const limit=mode==='single'?1:Number(count);
+  if (!Number.isInteger(limit)||limit<1||limit>10) throw Error('Escolha de 1 a 10 clipes.');
+  const segments=[];
+  for(let i=0;i<limit;i++) {
+    const offset=first+i*length;
+    if(offset>=total-.01) break;
+    segments.push({start:offset,length:Math.min(length,total-offset)});
   }
-  engine=ffmpeg;
-  return ffmpeg;
+  return segments;
 }
-function getDuration(file) {
+function waitFor(target,event,signal,timeout=30000) {
   return new Promise((resolve,reject)=>{
-    const url=URL.createObjectURL(file), video=document.createElement('video');
-    video.preload='metadata';
-    video.onloadedmetadata=()=>{const n=video.duration;URL.revokeObjectURL(url);Number.isFinite(n)&&n>0?resolve(n):reject(Error('Duração inválida'))};
-    video.onerror=()=>{URL.revokeObjectURL(url);reject(Error('Não foi possível ler o MP4'))};
-    video.src=url;
+    const finish=(error)=>{clearTimeout(timer);target.removeEventListener(event,ok);target.removeEventListener('error',bad);signal?.removeEventListener('abort',abort);error?reject(error):resolve();};
+    const ok=()=>finish(),bad=()=>finish(Error('O navegador não conseguiu decodificar este vídeo. Tente MP4 com vídeo H.264 e áudio AAC.'));
+    const abort=()=>finish(new DOMException('Corte cancelado.','AbortError'));
+    const timer=setTimeout(()=>finish(Error('O vídeo demorou demais para responder.')),timeout);
+    target.addEventListener(event,ok,{once:true});target.addEventListener('error',bad,{once:true});signal?.addEventListener('abort',abort,{once:true});
+    if(signal?.aborted) abort();
   });
 }
-export async function cutLocally(file,{mode,count,clipDuration,start,duration},status) {
-  if(!file||!file.name.toLowerCase().endsWith('.mp4'))throw Error('O corte rápido local requer arquivo MP4.');
-  const total=await getDuration(file);
-  const segmentLength=mode==='single'?Number(duration):Number(clipDuration);
-  const first=mode==='single'?Number(start):0;
-  if(!Number.isFinite(first)||first<0||first>=total)throw Error('Início do corte fora da duração do vídeo.');
-  if(!Number.isFinite(segmentLength)||segmentLength<=0)throw Error('Duração inválida.');
-  const segments=[];
-  if(mode==='single')segments.push({start:first,length:Math.min(segmentLength,total-first)});
-  else {
-    // Cortes sequenciais sem repetições, até a quantidade solicitada.
-    for(let t=0; t<total-.2&&segments.length<Number(count);t+=segmentLength)
-      segments.push({start:t,length:Math.min(segmentLength,total-t)});
+export function recordingFormat(Recorder=globalThis.MediaRecorder) {
+  if(!Recorder) throw Error('Este navegador não oferece gravação local. Abra no Chrome, Edge ou Safari atualizado.');
+  for(const mimeType of ['video/mp4;codecs=avc1.42E01E,mp4a.40.2','video/mp4','video/webm;codecs=vp8,opus','video/webm']) {
+    if(Recorder.isTypeSupported(mimeType)) return {mimeType,extension:mimeType.startsWith('video/mp4')?'mp4':'webm'};
   }
-  if(!segments.length)throw Error('Não há trechos para exportar.');
-  const ffmpeg=await getEngine(status);
-  const input='input_'+Date.now()+'.mp4';
-  const outputs=[];
+  throw Error('Nenhum formato de exportação local é compatível com este navegador.');
+}
+async function recordSegment(video,canvas,stream,segment,format,status,index,total,signal) {
+  if(signal.aborted) throw signal.reason;
+  video.pause();
+  if(Math.abs(video.currentTime-segment.start)>.001) {
+    const seek=waitFor(video,'seeked',signal);
+    video.currentTime=segment.start;
+    await seek;
+  }
+  const ctx=canvas.getContext('2d',{alpha:false});
+  ctx.drawImage(video,0,0,canvas.width,canvas.height);
+  const recorder=new MediaRecorder(stream,{mimeType:format.mimeType,videoBitsPerSecond:5000000,audioBitsPerSecond:128000});
+  const chunks=[];
+  return new Promise((resolve,reject)=>{
+    let timer,watchdog,frame,lastProgress=0,settled=false,failure;
+    const cleanup=()=>{clearInterval(timer);clearTimeout(watchdog);cancelAnimationFrame(frame);video.pause();video.removeEventListener('ended',stop);video.removeEventListener('error',bad);signal.removeEventListener('abort',abort);};
+    const finish=(error,blob)=>{if(settled)return;settled=true;cleanup();error?reject(error):resolve(blob);};
+    const stop=()=>{video.pause();if(recorder.state!=='inactive')recorder.stop();};
+    const fail=e=>{failure=e;stop();finish(e);};
+    const abort=()=>fail(new DOMException('Corte cancelado.','AbortError'));
+    const bad=()=>fail(Error('Falha ao ler o vídeo durante o corte.'));
+    recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
+    recorder.onerror=e=>fail(e.error||Error('Falha na gravação local.'));
+    recorder.onstop=()=>{const blob=new Blob(chunks,{type:recorder.mimeType});finish(failure||(!blob.size?Error('O navegador gerou um clipe vazio.'):null),blob);};
+    const draw=()=>{if(settled||recorder.state==='inactive')return;ctx.drawImage(video,0,0,canvas.width,canvas.height);frame=requestAnimationFrame(draw);};
+    video.addEventListener('ended',stop);video.addEventListener('error',bad);signal.addEventListener('abort',abort,{once:true});
+    timer=setInterval(()=>{
+      const elapsed=Math.max(0,video.currentTime-segment.start);
+      if(Date.now()-lastProgress>500){status('Clipe '+(index+1)+' de '+total+' · '+Math.min(100,Math.floor(elapsed/segment.length*100))+'% · mantenha esta aba visível');lastProgress=Date.now();}
+      if(video.currentTime>=segment.start+segment.length-.025||video.ended)stop();
+    },25);
+    watchdog=setTimeout(()=>fail(Error('A reprodução travou. Mantenha a aba visível e tente novamente.')),(segment.length*2+30)*1000);
+    try{recorder.start(1000);draw();video.play().catch(fail);}catch(e){fail(e);}
+  });
+}
+let busy=false;
+export async function cutLocally(file,options,status=()=>{},signal=new AbortController().signal) {
+  if(busy) throw Error('Já existe um corte em andamento.');
+  const format=recordingFormat();
+  if(!file?.size) throw Error('Selecione um vídeo que não esteja vazio.');
+  if(!HTMLCanvasElement.prototype.captureStream) throw Error('Este navegador não permite exportar o vídeo localmente. Use Chrome ou Edge no computador.');
+  busy=true;
+  let audio,source,stream,wakeLock;
+  const video=document.createElement('video'),canvas=document.createElement('canvas');
+  const url=URL.createObjectURL(file);
+  const controller=new AbortController();
+  const abort=()=>controller.abort();
+  const visibility=()=>{if(document.hidden)controller.abort();};
+  signal.addEventListener('abort',abort,{once:true});
+  if(signal.aborted)controller.abort();
+  document.addEventListener('visibilitychange',visibility);
+  video.playsInline=true;video.preload='auto';video.muted=true;
+  video.style.cssText='position:fixed;left:0;bottom:0;width:2px;height:2px;opacity:.01;pointer-events:none';
+  document.body.append(video);
   try {
-    status('Preparando arquivo local (nenhum vídeo será enviado ao Render)...');
-    await ffmpeg.writeFile(input,new Uint8Array(await file.arrayBuffer()));
-    for(let i=0;i<segments.length;i++){
-      const s=segments[i],name='viralclip_'+String(i+1).padStart(2,'0')+'.mp4';
-      status('Cortando '+(i+1)+' de '+segments.length+' no seu dispositivo...');
-      // Stream copy: sem recodificação, API ou processamento no servidor.
-      const code=await ffmpeg.exec(['-ss',String(s.start),'-i',input,'-t',String(s.length),'-map','0:v:0','-map','0:a?','-c','copy','-avoid_negative_ts','make_zero','-movflags','+faststart',name],-1);
-      if(code!==0)throw Error('Falha ao cortar trecho '+(i+1)+'. Verifique o codec MP4.');
-      const data=await ffmpeg.readFile(name);
-      outputs.push({name,bytes:new Uint8Array(data)});
-      await ffmpeg.deleteFile(name);
+    // Resume audio immediately in the initiating user action.
+    const Audio=globalThis.AudioContext||globalThis.webkitAudioContext;
+    if(!Audio) throw Error('Áudio local indisponível neste navegador.');
+    audio=new Audio();
+    await audio.resume();
+    if(audio.state!=='running')throw Error('O navegador bloqueou o áudio. Clique em Gerar novamente.');
+    const ready=waitFor(video,'loadeddata',controller.signal);
+    video.src=url;video.load();await ready;
+    const segments=planSegments(video.duration,options);
+    // Limit recording to 1080p to avoid excessive encoder memory on mobile.
+    const scale=Math.min(1,1080/Math.max(video.videoWidth,video.videoHeight));
+    canvas.width=Math.max(2,Math.round(video.videoWidth*scale/2)*2);
+    canvas.height=Math.max(2,Math.round(video.videoHeight*scale/2)*2);
+    stream=canvas.captureStream(30);
+    source=audio.createMediaElementSource(video);
+    const destination=audio.createMediaStreamDestination();
+    source.connect(destination);
+    video.muted=false; // Audio is routed only to the recorder, never to speakers.
+    destination.stream.getAudioTracks().forEach(track=>stream.addTrack(track));
+    try{wakeLock=await navigator.wakeLock?.request('screen');}catch{}
+    const files=[];
+    for(let i=0;i<segments.length;i++) {
+      status('Preparando clipe '+(i+1)+' de '+segments.length+'...');
+      const blob=await recordSegment(video,canvas,stream,segments[i],format,status,i,segments.length,controller.signal);
+      files.push({name:'viralclip_'+String(i+1).padStart(2,'0')+'.'+format.extension,blob,type:blob.type});
     }
-    if(mode==='single')return {blob:new Blob([outputs[0].bytes],{type:'video/mp4'}),files:outputs,zip:false};
-    status('Montando ZIP no seu computador...');
-    const archive=zipSync(Object.fromEntries(outputs.map(x=>[x.name,x.bytes])),{level:0});
-    return {blob:new Blob([archive],{type:'application/zip'}),files:outputs,zip:true};
+    if(options.mode==='single')return {blob:files[0].blob,files,zip:false,extension:format.extension};
+    status('Montando ZIP local...');
+    const entries={};
+    for(const item of files)entries[item.name]=new Uint8Array(await item.blob.arrayBuffer());
+    const archive=zipSync(entries,{level:0});
+    return {blob:new Blob([archive],{type:'application/zip'}),files,zip:true,extension:format.extension};
+  } catch(error) {
+    if(controller.signal.aborted)throw new DOMException(document.hidden?'Corte interrompido: mantenha a aba visível durante a exportação.':'Corte cancelado.','AbortError');
+    throw error;
   } finally {
-    for(const o of outputs){try{await ffmpeg.deleteFile(o.name)}catch{}}
-    try{await ffmpeg.deleteFile(input)}catch{}
+    video.pause();video.removeAttribute('src');video.load();video.remove();
+    stream?.getTracks().forEach(track=>track.stop());source?.disconnect();
+    try{await audio?.close();}catch{}
+    try{await wakeLock?.release();}catch{}
+    URL.revokeObjectURL(url);signal.removeEventListener('abort',abort);document.removeEventListener('visibilitychange',visibility);busy=false;
   }
 }

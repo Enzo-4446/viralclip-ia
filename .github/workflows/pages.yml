@@ -25,6 +25,9 @@ jobs:
       - name: Install
         working-directory: frontend
         run: npm install --no-audit --no-fund
+      - name: Test local segment planning
+        working-directory: frontend
+        run: npm test
       - name: Build
         working-directory: frontend
         env:
@@ -37,3 +40,4 @@ jobs:
         with:
           path: frontend/dist
       - uses: actions/deploy-pages@v4
+
