@@ -44,7 +44,7 @@ def health():
     return {"status": "ok", "ffmpeg": subprocess.run(["ffmpeg","-version"],capture_output=True,timeout=5).returncode == 0}
 
 @app.post("/clips")
-async def clips(file: UploadFile = File(...), brand: str = Form("VIRALCLIP"), start: float = Form(0), duration: int = Form(45), project_id: str = Form(...), user: dict = Depends(require_user)):
+async def clips(file: UploadFile = File(...), brand: str = Form("VIRALCLIP"), start: float = Form(0), duration: int = Form(45), project_id: str = Form(...), settings: str = Form("{}"), voice: UploadFile | None = File(None), user: dict = Depends(require_user)):
     try:
         uuid.UUID(project_id)
     except ValueError:
@@ -78,23 +78,23 @@ async def clips(file: UploadFile = File(...), brand: str = Form("VIRALCLIP"), st
                 if total > MAX_BYTES:
                     raise HTTPException(413, "Vídeo acima do limite de 500 MB")
                 target.write(chunk)
-        # Movimento suave com posição variável ao longo do tempo.
-        safe_brand = brand.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
-        watermark = ("drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:"
-                     f"text='{safe_brand}':fontsize=30:fontcolor=white@0.65:"
-                     "borderw=2:bordercolor=black@0.5:"
-                     "x=(w-text_w)/2+((w-text_w)/3)*sin(t/3):"
-                     "y=(h-text_h)/2+((h-text_h)/3)*cos(t/4)")
-        vf = ("scale=1080:1920:force_original_aspect_ratio=increase,"
-              "crop=1080:1920,setsar=1," + watermark)
-        cmd = ["ffmpeg","-nostdin","-hide_banner","-loglevel","error","-y",
-               "-ss",str(start),"-i",str(src),"-t",str(duration),
-               "-vf",vf,"-c:v","libx264","-preset","veryfast","-crf","20",
-               "-pix_fmt","yuv420p","-r","30","-c:a","aac","-b:a","192k",
-               "-movflags","+faststart",str(out)]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-        if result.returncode or not out.exists():
-            raise HTTPException(422, "Falha na renderização: " + result.stderr[-400:])
+        from editor import render, options
+        try: options(settings)
+        except ValueError as e: raise HTTPException(400,str(e))
+        narration=None
+        if voice is not None:
+            narration=ROOT/f"{job}.voice"
+            size=0
+            with narration.open("wb") as target:
+                while chunk:=await voice.read(1024*1024):
+                    size+=len(chunk)
+                    if size>50*1024*1024: raise HTTPException(413,"Narração acima de 50 MB")
+                    target.write(chunk)
+        try:
+            await __import__("starlette.concurrency",fromlist=["run_in_threadpool"]).run_in_threadpool(render,src,out,brand,start,duration,settings,narration)
+        except (ValueError,RuntimeError) as e: raise HTTPException(422,str(e))
+        finally:
+            if narration: narration.unlink(missing_ok=True)
         return FileResponse(out, media_type="video/mp4", filename="viralclip.mp4", background=BackgroundTask(out.unlink, missing_ok=True))
     except subprocess.TimeoutExpired:
         raise HTTPException(504, "Tempo de renderização excedido")
@@ -137,7 +137,7 @@ def youtube_metadata(url: str):
 
 # Batch mode: authenticated upload, ownership check and ten scene-aware exports.
 @app.post("/clips/batch")
-async def batch_clips(file: UploadFile = File(...), brand: str = Form("VIRALCLIP"), project_id: str = Form(...), user: dict = Depends(require_user)):
+async def batch_clips(file: UploadFile = File(...), brand: str = Form("VIRALCLIP"), project_id: str = Form(...), settings: str = Form("{}"), voice: UploadFile | None = File(None), user: dict = Depends(require_user)):
     from batch import render_batch
     try:
         uuid.UUID(project_id)
@@ -167,8 +167,20 @@ async def batch_clips(file: UploadFile = File(...), brand: str = Form("VIRALCLIP
                 size+=len(chunk)
                 if size>MAX_BYTES: raise HTTPException(413,"Arquivo acima de 500 MB")
                 dest.write(chunk)
+        from editor import options
+        try: options(settings)
+        except ValueError as e: raise HTTPException(400,str(e))
+        narration=None
+        if voice is not None:
+            narration=ROOT/(job+".voice")
+            total_voice=0
+            with narration.open("wb") as target:
+                while chunk:=await voice.read(1024*1024):
+                    total_voice+=len(chunk)
+                    if total_voice>50*1024*1024: raise HTTPException(413,"Narração acima de 50 MB")
+                    target.write(chunk)
         try:
-            await __import__("starlette.concurrency",fromlist=["run_in_threadpool"]).run_in_threadpool(render_batch,src,output,brand)
+            await __import__("starlette.concurrency",fromlist=["run_in_threadpool"]).run_in_threadpool(render_batch,src,output,brand,10,settings,narration)
         except ValueError as exc:
             raise HTTPException(422,str(exc))
         except (RuntimeError,subprocess.TimeoutExpired) as exc:
