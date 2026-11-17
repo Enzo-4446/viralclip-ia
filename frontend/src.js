@@ -1,3 +1,4 @@
+import {mountTimeline} from './timeline.js';
 import {cutLocally} from './local-cutter.js';
 import {unzipSync} from 'fflate';
 import {createClient} from '@supabase/supabase-js';
@@ -20,7 +21,7 @@ const credentials=()=>{const email=$('email').value.trim(),password=$('password'
 $('signin').onclick=async()=>{const values=credentials();if(!values)return;$('authStatus').textContent='Entrando...';try{const {error}=await sb.auth.signInWithPassword(values);$('authStatus').textContent=error?.message||'Autenticado';if(!error)await refresh()}catch(e){$('authStatus').textContent=e.message}};
 $('signup').onclick=async()=>{const values=credentials();if(!values)return;$('authStatus').textContent='Criando conta...';try{const {error}=await sb.auth.signUp({...values,options:{emailRedirectTo:authRedirectUrl}});$('authStatus').textContent=error?.message||'Conta criada. Verifique seu e-mail se a confirmação estiver habilitada.';if(!error)await refresh()}catch(e){$('authStatus').textContent=e.message}};
 $('signout').onclick=async()=>{await sb.auth.signOut();await refresh()};
-let localBusy=false,localController=null;
+let localBusy=false,localController=null,manualTimeline=null;
 let sourceMode='upload';let localPreviewUrl=null;let importedYoutubeFile=null;
 const setSourceMode=mode=>{if(localBusy)return;sourceMode=mode;$('youtubePanel').hidden=mode!=='youtube';$('uploadPanel').hidden=mode!=='upload';$('tabYoutube').classList.toggle('active',mode==='youtube');$('tabUpload').classList.toggle('active',mode==='upload');$('status').textContent='';$('download').hidden=true;const engine=$('processingEngine');if(engine){engine.disabled=mode==='youtube';$('localNote').textContent=mode==='youtube'?'Links do YouTube usam o servidor. Para corte local, envie um arquivo MP4 do computador.':engine.value==='local'?'Corte local: seu computador processa o MP4 sem enviar o arquivo ao Render.':'Edição avançada: o vídeo será enviado ao servidor Render.';}updateGenerateState()};
 $('tabYoutube').onclick=()=>setSourceMode('youtube');$('tabUpload').onclick=()=>setSourceMode('upload');
@@ -30,18 +31,21 @@ $('file').onchange=()=>{importedYoutubeFile=null;const file=$('file').files[0];i
 const localEngine=()=>$('processingEngine').value==='local';
 $('processingEngine').onchange=()=>{
   const local=localEngine();
-  for(const id of ['watermark','brand','aspect','quality','fps','crf','framing','captions','captionLanguage','captionStyle','recordVoice','voiceFile','ducking','originalVolume','duckDb','releaseMs'])$(id).disabled=local;
-  $('settingsSummary').textContent=local?'Corte local: áudio e vídeo, até 1080p e 30 FPS, proporção original. MP4 ou WebM conforme o navegador.':'Edição pelo servidor selecionada.';
-  $('localNote').textContent=local?'Vídeo e áudio processados neste dispositivo, sem upload ou API. Exportação em tempo real, até 1080p/30 FPS, proporção original. MP4 ou WebM conforme o navegador. Mantenha esta aba visível.':'Edição avançada usa o Render e permite enquadramento vertical, marca e legendas quando configuradas.';
+  for(const id of ['aspect','quality','fps','crf','framing','captions','captionLanguage','captionStyle','recordVoice','voiceFile','ducking','originalVolume','duckDb','releaseMs'])$(id).disabled=local;
+  $('watermark').disabled=localBusy;$('brand').disabled=localBusy||!$('watermark').checked;
+  $('settingsSummary').textContent=local?'Corte local: áudio e vídeo, até 1080p e 30 FPS, proporção original e marca dourada opcional. Primeiros e últimos 10s ignorados. Duração fixa. MP4 ou WebM conforme o navegador.':'Edição pelo servidor selecionada.';
+  $('localNote').textContent=local?'Vídeo e áudio processados neste dispositivo, sem upload ou API. Exportação em tempo real, até 1080p/30 FPS, proporção original e marca dourada opcional. Primeiros e últimos 10s ignorados. Duração fixa. MP4 ou WebM conforme o navegador. Mantenha esta aba visível.':'Edição avançada usa o Render e permite enquadramento vertical, marca e legendas quando configuradas.';
 };
 async function generateLocal(f,title,session){
   const status=message=>$('status').textContent=message;
   if(localBusy)return;
-  localBusy=true;localController=new AbortController();
+  if($('watermark').checked&&!$('brand').value.trim()){status('Informe o nome da marca d’água.');return;}
+  const selections=$('mode').value==='single'?manualTimeline?.getSelections():undefined;
+  localBusy=true;localController=new AbortController();manualTimeline?.setBusy(true);
   $('cancelLocal').hidden=false;
   updateGenerateState();
   try{
-    const result=await cutLocally(f,{mode:$('mode').value,count:Number($('count').value),clipDuration:Number($('clipDuration').value),start:Number($('start').value),end:$('end').value===''?null:Number($('end').value),duration:Number($('duration').value)},status,localController.signal);
+    const result=await cutLocally(f,{mode:$('mode').value,count:Number($('count').value),clipDuration:Number($('clipDuration').value),watermark:$('watermark').checked,brand:$('brand').value.trim(),selections,start:$('mode').value==='single'?10:Number($('start').value),end:$('end').value===''?null:Number($('end').value),duration:Number($('duration').value)},status,localController.signal);
     clearResults();
     for(const item of result.files){
       const blob=item.blob;
@@ -55,11 +59,11 @@ async function generateLocal(f,title,session){
     $('download').href=url;$('download').download=result.zip?'viralclip_cortes.zip':'viralclip.'+result.extension;
     $('download').textContent=result.zip?'Baixar todos em ZIP':'Baixar '+result.extension.toUpperCase();$('download').hidden=false;
     status(result.files.length+' clipe(s) gerado(s) localmente, sem enviar o vídeo ao servidor. '+(result.notice||''));
-    const {error}=await sb.from('clip_projects').insert({user_id:session.user.id,title,watermark_text:'',rights_confirmed:true,source_kind:'upload'});
+    const {error}=await sb.from('clip_projects').insert({user_id:session.user.id,title,watermark_text:$('watermark').checked?$('brand').value.trim():'',rights_confirmed:true,source_kind:'upload'});
     if(error)console.warn('Histórico:',error.message);
     await loadProjects();
   }catch(e){status('Corte local não concluído: '+(e?.message||String(e)||'erro desconhecido')+'');console.error(e)}
-  finally{localBusy=false;localController=null;$('cancelLocal').hidden=true;updateGenerateState()}
+  finally{localBusy=false;localController=null;manualTimeline?.setBusy(false);$('cancelLocal').hidden=true;updateGenerateState()}
 }
 $('cancelLocal').onclick=()=>localController?.abort();
 $('generate').onclick=async()=>{if(localBusy)return;const f=$('file').files[0]||importedYoutubeFile;if(sourceMode==='upload'&&!f){$('status').textContent='Selecione um vídeo.';return}if(sourceMode==='youtube'&&!youtubeId($('youtubeUrl').value.trim())){$('status').textContent='Cole um link válido do YouTube.';return}if(sourceMode==='youtube'&&!$('rights').checked){$('status').textContent='Confirme que você tem autorização para editar o vídeo.';return}const {data:{session}}=await sb.auth.getSession();if(!session){$('status').textContent='Faça login novamente.';return}const brand=$('brand').value.trim(),title=$('title').value.trim();if(sourceMode==='upload'&&localEngine()){if(!title){$('status').textContent='Informe o título do projeto.';return}await generateLocal(f,title,session);return}if(!api){$('status').textContent='Servidor FFmpeg indisponível.';return}if(!title||($('watermark').checked&&!brand)){$('status').textContent='Informe título e, se ativada, a marca.';return}if($('captions').checked){try{const capsResponse=await fetch(api+'/capabilities',{headers:{Authorization:'Bearer '+session.access_token}});if(capsResponse.ok){const caps=await capsResponse.json();if(!caps.captions){$('status').textContent='O servidor não possui transcrição configurada. Desative Legendas automáticas para gerar o vídeo.';return}}}catch(e){console.warn('Capacidades indisponíveis',e)}}if(sourceMode==='youtube'){
@@ -103,7 +107,7 @@ const fd=new FormData();if(sourceMode==='youtube'){fd.append('url',$('youtubeUrl
 }finally{clearTimeout(timeout)}if(!r.ok){const e=await r.json().catch(()=>({}));throw Error(e.detail||'Erro '+r.status)}const blob=await r.blob();clearResults();if(sourceMode==='youtube'||$('mode').value==='batch'){try{const entries=unzipSync(new Uint8Array(await blob.arrayBuffer()));const clips=Object.keys(entries).filter(name=>name.endsWith('.mp4')).sort();for(const [index,name] of clips.entries()){const videoBlob=new Blob([entries[name]],{type:'video/mp4'});const url=URL.createObjectURL(videoBlob);resultUrls.push(url);const card=document.createElement('div');card.className='result-card';const video=document.createElement('video');video.src=url;video.controls=true;video.playsInline=true;video.preload='metadata';const title=document.createElement('p');title.textContent='Clipe '+String(index+1).padStart(2,'0');const link=document.createElement('a');link.href=url;link.download=name;link.textContent='Baixar MP4';card.append(video,title,link);$('results').append(card)}if(clips.length===0)throw Error('ZIP sem vídeos');$('status').textContent=clips.length+' clipes prontos. Baixe individualmente ou todos em ZIP.'}catch(e){$('status').textContent='ZIP gerado, mas não foi possível abrir as prévias: '+e.message}}$('download').href=URL.createObjectURL(blob);$('download').download=(sourceMode==='youtube'||$('mode').value==='batch')?'viralclip_cortes.zip':'viralclip.mp4';$('download').textContent=(sourceMode==='youtube'||$('mode').value==='batch')?'Baixar cortes em ZIP':'Baixar MP4';$('download').hidden=false;if(sourceMode!=='youtube'&&$('mode').value==='single'){$('status').textContent='Clipe pronto para baixar.';const url=$('download').href;const card=document.createElement('div');card.className='result-card';const video=document.createElement('video');video.src=url;video.controls=true;video.playsInline=true;card.append(video);$('results').append(card)}const {error:historyError}=await sb.from('clip_projects').insert({user_id:session.user.id,title,watermark_text:brand,rights_confirmed:true,source_kind:sourceMode==='youtube'?'youtube':'upload'});if(historyError)console.warn('Histórico não salvo:',historyError.message);await loadProjects()}catch(e){$('status').textContent=e?.name==='AbortError'?'O processamento ultrapassou o tempo limite. Tente 1 corte em 720p, 30 FPS, sem legendas. Nenhum histórico foi salvo.':e instanceof TypeError?'Falha de rede ao comunicar com o Render. Pode ser serviço suspenso, deploy com erro, conexão interrompida ou CORS. Confira o status em '+api+'/health e os logs no Render.':(e?.message||String(e)||'Erro desconhecido')}finally{updateGenerateState()}};
 sb.auth.onAuthStateChange((event)=>{if(event==='PASSWORD_RECOVERY'){recoveryMode=true;$('auth').hidden=false;$('app').hidden=true;$('resetBox').hidden=false;$('authStatus').textContent='Informe uma nova senha para concluir a recuperação.';return}if(!recoveryMode)setTimeout(refresh,0)});refresh();
 
-$('mode').onchange=()=>{$('generate').textContent=$('mode').value==='batch'?'Gerar clipes':'Gerar MP4';$('start').disabled=false;$('duration').disabled=$('mode').value==='batch';$('download').hidden=true};$('mode').onchange();
+$('mode').onchange=()=>{$('generate').textContent=$('mode').value==='batch'?'Gerar clipes':'Cortar seleção manual';$('start').disabled=false;$('duration').disabled=$('mode').value==='batch';$('download').hidden=true};$('mode').onchange();
 
 
 // Professional editor: safe local recording and explicit render capability notices.
@@ -123,7 +127,7 @@ $('watermark').addEventListener('change',()=>{$('brand').disabled=!$('watermark'
 $('count').addEventListener('change',updateEditor);$('clipDuration').addEventListener('change',updateEditor);$('aspect').addEventListener('change',updateEditor);
 const oldModeChange=$('mode').onchange;$('mode').onchange=()=>{oldModeChange();$('count').disabled=$('mode').value==='single';$('clipDuration').disabled=$('mode').value==='single';clearResults()};$('mode').onchange();
 
-const updateGenerateState=()=>{for(const id of ['file','processingEngine','tabYoutube','tabUpload','mode','count','clipDuration','start','end','duration'])$(id).disabled=localBusy;const yt=sourceMode==='youtube';$('manualFields').hidden=yt||$('mode').value!=='single';$('rangeFields').hidden=yt||(!localEngine()&&$('mode').value==='batch');$('endField').hidden=!localEngine();const ready=yt?Boolean(youtubeId($('youtubeUrl').value.trim())&&$('rights').checked):Boolean($('file').files[0]||importedYoutubeFile);$('generate').disabled=localBusy||!ready;$('generate').title=ready?'Gerar vídeos com as configurações escolhidas':yt?'Informe um link e confirme os direitos de edição':'Selecione um vídeo';$('generate').textContent=yt?'Gerar clipes':$('mode').value==='batch'?'Gerar clipes':'Gerar MP4';$('mode').disabled=localBusy||yt;$('recordVoice').disabled=yt||localBusy||localEngine();$('voiceFile').disabled=yt||localBusy||localEngine();$('count').disabled=localBusy||!yt&&$('mode').value==='single';$('clipDuration').disabled=localBusy||!yt&&$('mode').value==='single';};
+const updateGenerateState=()=>{for(const id of ['file','processingEngine','tabYoutube','tabUpload','mode','count','clipDuration','start','end','duration','watermark','brand'])$(id).disabled=localBusy;$('brand').disabled=localBusy||!$('watermark').checked;const yt=sourceMode==='youtube';$('manualFields').hidden=yt||$('mode').value!=='single';$('rangeFields').hidden=yt||(!localEngine()&&$('mode').value==='batch');$('endField').hidden=!localEngine();const ready=yt?Boolean(youtubeId($('youtubeUrl').value.trim())&&$('rights').checked):Boolean($('file').files[0]||importedYoutubeFile);$('generate').disabled=localBusy||!ready;$('generate').title=ready?'Gerar vídeos com as configurações escolhidas':yt?'Informe um link e confirme os direitos de edição':'Selecione um vídeo';$('generate').textContent=yt?'Gerar clipes':$('mode').value==='batch'?'Gerar clipes':'Cortar seleção manual';$('mode').disabled=localBusy||yt;$('recordVoice').disabled=yt||localBusy||localEngine();$('voiceFile').disabled=yt||localBusy||localEngine();$('count').disabled=localBusy||!yt&&$('mode').value==='single';$('clipDuration').disabled=localBusy||!yt&&$('mode').value==='single';};
 $('youtubeUrl').addEventListener('input',updateGenerateState);$('rights').addEventListener('change',updateGenerateState);$('file').addEventListener('change',updateGenerateState);$('mode').addEventListener('change',updateGenerateState);updateGenerateState();
 
 
@@ -227,3 +231,6 @@ $('clearProjects').onclick=async()=>{
 setSourceMode('upload');$('processingEngine').onchange();
 
 $('processingEngine').addEventListener('change',updateGenerateState);
+
+
+manualTimeline=mountTimeline({preview:$('videoPreview'),root:$('manualTimeline'),mode:$('mode'),duration:$('duration'),start:$('start'),end:$('end'),watermark:$('watermark'),brand:$('brand'),engine:$('processingEngine'),generate:$('generate')});

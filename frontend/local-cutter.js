@@ -1,27 +1,27 @@
+import {drawWatermark} from './watermark.js';
 import {zipSync} from 'fflate';
 
 // Native media pipeline: no WASM, remote encoder or video upload.
-export function planSegments(total,{mode,count,clipDuration,start=0,end,duration}) {
-  if (!Number.isFinite(total)||total<=0) throw Error('Não foi possível determinar a duração do vídeo.');
-  if (!['single','batch'].includes(mode)) throw Error('Modo de corte inválido.');
+export function planSegments(total,{mode,count,clipDuration,start,end,duration,selections}) {
+  if(!Number.isFinite(total)||total<=20)throw Error('O vídeo precisa ter mais de 20 segundos: os primeiros e os últimos 10 segundos são ignorados.');
+  if(!['single','batch'].includes(mode))throw Error('Modo de corte inválido.');
+  const first=Math.max(10,start==null||start===''?10:Number(start));
+  const last=Math.min(total-10,end==null||end===''?total-10:Number(end));
+  if(!Number.isFinite(first)||!Number.isFinite(last)||first>=last)throw Error('Escolha um intervalo válido entre 10s e '+(total-10).toFixed(1)+'s.');
   const length=Number(mode==='single'?duration:clipDuration);
-  const first=Number(start);
-  const last=end==null||end===''?total:Number(end);
-  if(!Number.isFinite(last)||last<=first||last>total)throw Error('O final deve ser maior que o início e não ultrapassar a duração do vídeo.');
-  const available=last-first;
-  if (!Number.isFinite(length)||length<=0) throw Error('Escolha uma duração maior que zero.');
-  if (!Number.isFinite(first)||first<0||first>=total) throw Error('O início está fora da duração do vídeo.');
-  const limit=mode==='single'?1:Number(count);
-  if (!Number.isInteger(limit)||limit<1||limit>10) throw Error('Escolha de 1 a 10 clipes.');
-  // Honor the requested count. Short sources are divided into shorter, distinct clips.
-  const step=mode==='batch'?Math.min(length,available/limit):length;
-  if(mode==='batch'&&step<.5)throw Error('Vídeo muito curto para '+limit+' clipes. Reduza a quantidade.');
-  const segments=[];
-  for(let i=0;i<limit;i++) {
-    const offset=first+i*step;
-    segments.push({start:offset,length:Math.min(step,last-offset)});
+  if(!Number.isFinite(length)||length<=0)throw Error('Escolha uma duração maior que zero.');
+  if(mode==='single'&&selections?.length) {
+    if(selections.length>10)throw Error('Selecione no máximo 10 trechos por vez.');
+    return selections.map(item=>{
+      const offset=Number(item.start);
+      if(!Number.isFinite(offset)||offset<first||offset+length>last+1e-6)throw Error('Um dos trechos não cabe no intervalo permitido. Ajuste a seleção.');
+      return {start:offset,length};
+    });
   }
-  return segments;
+  const limit=mode==='single'?1:Number(count);
+  if(!Number.isInteger(limit)||limit<1||limit>10)throw Error('Escolha de 1 a 10 clipes.');
+  if(limit*length>last-first+1e-6)throw Error('O intervalo útil tem '+(last-first).toFixed(1)+'s e comporta '+Math.floor((last-first)/length)+' clipe(s) de '+length+'s. Reduza a quantidade ou a duração. A duração escolhida será preservada.');
+  return Array.from({length:limit},(_,i)=>({start:first+i*length,length}));
 }
 function waitFor(target,event,signal,timeout=30000) {
   return new Promise((resolve,reject)=>{
@@ -40,7 +40,7 @@ export function recordingFormat(Recorder=globalThis.MediaRecorder) {
   }
   throw Error('Nenhum formato de exportação local é compatível com este navegador.');
 }
-async function recordSegment(video,canvas,stream,segment,format,status,index,total,signal) {
+async function recordSegment(video,canvas,stream,segment,format,status,index,total,signal,watermarkText) {
   if(signal.aborted) throw signal.reason;
   video.pause();
   if(Math.abs(video.currentTime-segment.start)>.001) {
@@ -49,7 +49,7 @@ async function recordSegment(video,canvas,stream,segment,format,status,index,tot
     await seek;
   }
   const ctx=canvas.getContext('2d',{alpha:false});
-  ctx.drawImage(video,0,0,canvas.width,canvas.height);
+  ctx.drawImage(video,0,0,canvas.width,canvas.height);drawWatermark(ctx,canvas.width,canvas.height,watermarkText);
   const recorder=new MediaRecorder(stream,{mimeType:format.mimeType,videoBitsPerSecond:5000000,audioBitsPerSecond:128000});
   const chunks=[];
   return new Promise((resolve,reject)=>{
@@ -63,7 +63,7 @@ async function recordSegment(video,canvas,stream,segment,format,status,index,tot
     recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
     recorder.onerror=e=>fail(e.error||Error('Falha na gravação local.'));
     recorder.onstop=()=>{const blob=new Blob(chunks,{type:recorder.mimeType});finish(failure||(!blob.size?Error('O navegador gerou um clipe vazio.'):null),blob);};
-    const draw=()=>{if(settled||recorder.state==='inactive')return;ctx.drawImage(video,0,0,canvas.width,canvas.height);frame=requestAnimationFrame(draw);};
+    const draw=()=>{if(settled||recorder.state==='inactive')return;ctx.drawImage(video,0,0,canvas.width,canvas.height);drawWatermark(ctx,canvas.width,canvas.height,watermarkText);frame=requestAnimationFrame(draw);};
     video.addEventListener('ended',stop);video.addEventListener('error',bad);signal.addEventListener('abort',abort,{once:true});
     timer=setInterval(()=>{
       const elapsed=Math.max(0,video.currentTime-segment.start);
@@ -78,6 +78,7 @@ let busy=false;
 export async function cutLocally(file,options,status=()=>{},signal=new AbortController().signal) {
   if(busy) throw Error('Já existe um corte em andamento.');
   const format=recordingFormat();
+  if(options.watermark&&!options.brand?.trim())throw Error('Informe o nome da marca d’água.');
   if(!file?.size) throw Error('Selecione um vídeo que não esteja vazio.');
   if(!HTMLCanvasElement.prototype.captureStream) throw Error('Este navegador não permite exportar o vídeo localmente. Use Chrome ou Edge no computador.');
   busy=true;
@@ -103,8 +104,7 @@ export async function cutLocally(file,options,status=()=>{},signal=new AbortCont
     const ready=waitFor(video,'loadeddata',controller.signal);
     video.src=url;video.load();await ready;
     const segments=planSegments(video.duration,options);
-    const shortened=options.mode==='batch'&&segments[0].length<Number(options.clipDuration)-.01;
-    const report=message=>status((shortened?'Intervalo selecionado de '+((options.end==null||options.end===''?video.duration:Number(options.end))-Number(options.start||0)).toFixed(1)+'s: '+segments.length+' clipes de aproximadamente '+segments[0].length.toFixed(1)+'s (ajustados para não repetir trechos). ':'')+message);
+    const report=status;
     // Limit recording to 1080p to avoid excessive encoder memory on mobile.
     const scale=Math.min(1,1080/Math.max(video.videoWidth,video.videoHeight));
     canvas.width=Math.max(2,Math.round(video.videoWidth*scale/2)*2);
@@ -119,15 +119,15 @@ export async function cutLocally(file,options,status=()=>{},signal=new AbortCont
     const files=[];
     for(let i=0;i<segments.length;i++) {
       report('Preparando clipe '+(i+1)+' de '+segments.length+'...');
-      const blob=await recordSegment(video,canvas,stream,segments[i],format,report,i,segments.length,controller.signal);
+      const blob=await recordSegment(video,canvas,stream,segments[i],format,report,i,segments.length,controller.signal,options.watermark?options.brand:'');
       files.push({name:'viralclip_'+String(i+1).padStart(2,'0')+'.'+format.extension,blob,type:blob.type});
     }
-    if(options.mode==='single')return {blob:files[0].blob,files,zip:false,extension:format.extension,notice:''};
+    if(options.mode==='single'&&files.length===1)return {blob:files[0].blob,files,zip:false,extension:format.extension,notice:''};
     status('Montando ZIP local...');
     const entries={};
     for(const item of files)entries[item.name]=new Uint8Array(await item.blob.arrayBuffer());
     const archive=zipSync(entries,{level:0});
-    return {blob:new Blob([archive],{type:'application/zip'}),files,zip:true,extension:format.extension,notice:shortened?'Duração ajustada para aproximadamente '+segments[0].length.toFixed(1)+' segundos por clipe, sem repetir trechos.':''};
+    return {blob:new Blob([archive],{type:'application/zip'}),files,zip:true,extension:format.extension,notice:'Os primeiros e últimos 10 segundos foram excluídos. Duração escolhida preservada.'};
   } catch(error) {
     if(controller.signal.aborted)throw new DOMException(document.hidden?'Corte interrompido: mantenha a aba visível durante a exportação.':'Corte cancelado.','AbortError');
     throw error;
@@ -139,3 +139,4 @@ export async function cutLocally(file,options,status=()=>{},signal=new AbortCont
     URL.revokeObjectURL(url);signal.removeEventListener('abort',abort);document.removeEventListener('visibilitychange',visibility);busy=false;
   }
 }
+
