@@ -15,7 +15,7 @@ def scene_times(path, duration):
     # Scene detection is content-based; no transcript or emotion inference is claimed.
     cmd=["ffmpeg","-hide_banner","-nostdin","-i",str(path),"-vf","scale=320:-2,select=gt(scene\\,0.30),showinfo","-an","-f","null","-"]
     try:
-        p=subprocess.run(cmd,capture_output=True,text=True,timeout=120)
+        p=subprocess.run(cmd,capture_output=True,text=True,timeout=35)
         times=[float(v) for v in re.findall(r"pts_time:([0-9.]+)",p.stderr)]
         return sorted(set(t for t in times if 0<t<duration))
     except (subprocess.TimeoutExpired,ValueError):
@@ -39,9 +39,10 @@ def suggest(duration, scenes, count=10, clip_length=60):
 
 def render_batch(src, output_zip, brand, max_count=10, settings="{}", voice=None):
     duration=probe(src)
-    scenes=scene_times(src,duration)
     from editor import options
     config=options(settings)
+    # Skip a full-video scene scan when exporting only one clip.
+    scenes=[] if int(config.get('count',max_count))==1 else scene_times(src,duration)
     count=int(config.get("count",max_count))
     clip_length=int(config.get("clipDuration",60))
     if not 1<=count<=10 or clip_length not in (30,45,60,90): raise ValueError("Quantidade ou duração inválida")
