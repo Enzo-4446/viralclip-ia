@@ -258,7 +258,7 @@ async def youtube_download(url: str = Form(...), rights_confirmed: bool = Form(F
     prefix=job+".download."
     template=str(ROOT/(prefix+"%(ext)s"))
     canonical="https://www.youtube.com/watch?v="+video_id
-    cmd=["yt-dlp","--js-runtimes","node","--no-playlist","--no-progress","--no-warnings","--max-filesize","500M","--match-filter","!is_live & !was_live","--socket-timeout","20","--retries","2","--fragment-retries","2","-f","bv*[height<=720]+ba/b[height<=720]/b","--merge-output-format","mp4","--recode-video","mp4","-o",template,canonical]
+    cmd=["yt-dlp","--js-runtimes","node","--no-playlist","--no-progress","--no-warnings","--max-filesize","500M","--match-filter","!is_live & !was_live","--socket-timeout","20","--retries","1","--fragment-retries","1","-f","bv*[height<=720]+ba/b[height<=720]/b","--merge-output-format","mp4","-o",template,canonical]
     def cleanup():
         for item in ROOT.glob(prefix+"*"):
             if item.is_file(): item.unlink(missing_ok=True)
@@ -267,6 +267,19 @@ async def youtube_download(url: str = Form(...), rights_confirmed: bool = Form(F
             proc=await __import__("starlette.concurrency",fromlist=["run_in_threadpool"]).run_in_threadpool(lambda:subprocess.run(cmd,capture_output=True,text=True,timeout=240))
         except subprocess.TimeoutExpired:
             raise HTTPException(504,"Tempo de transferência excedido")
+        if proc.returncode:
+            error=(proc.stderr or "").lower()
+            # Embedded client only works for videos the uploader allows embedding.
+            # A second extraction attempt can help with client-specific format failures,
+            # but cannot override account, copyright or IP restrictions.
+            if not any(k in error for k in ("sign in","not a bot","confirm you","private video","age-restricted","copyright")):
+                fallback=cmd[:]
+                fallback[1:1]=["--extractor-args","youtube:player_client=web_embedded"]
+                try:
+                    proc=await __import__("starlette.concurrency",fromlist=["run_in_threadpool"]).run_in_threadpool(lambda:subprocess.run(fallback,capture_output=True,text=True,timeout=120))
+                    error=(proc.stderr or "").lower()
+                except subprocess.TimeoutExpired:
+                    raise HTTPException(504,"O YouTube não respondeu na tentativa alternativa")
         if proc.returncode:
             error=(proc.stderr or "").lower()
             if any(k in error for k in ("sign in","bot","cookies","confirm you")):
