@@ -166,6 +166,14 @@ async def batch_clips(file: UploadFile = File(...), brand: str = Form("VIRALCLIP
 
 # Optional YouTube input for videos that the uploader owns or is authorized to process.
 # Public YouTube streams are not guaranteed accessible on hosted servers.
+def youtube_pot_args():
+    """Official yt-dlp mweb + BgUtils script provider (no extra public port)."""
+    script="/opt/bgutil/server"
+    if os.path.isfile(script+"/build/main.js"):
+        return ["--extractor-args","youtube:player_client=mweb",
+                "--extractor-args","youtubepot-bgutilscript:server_home="+script]
+    return []
+
 @app.post("/clips/youtube")
 async def youtube_clips(url: str = Form(...), project_id: str = Form(""), brand: str = Form("VIRALCLIP"), settings: str = Form("{}"), rights_confirmed: bool = Form(False), user: dict = Depends(require_user)):
     from editor import options
@@ -190,6 +198,7 @@ async def youtube_clips(url: str = Form(...), project_id: str = Form(""), brand:
     try:
         # Restricted, single-item, bounded transfer. yt-dlp may fail when YouTube restricts access.
         cmd=["yt-dlp","--js-runtimes","node","--no-playlist","--no-progress","--no-warnings","--max-filesize","500M","--match-filter","!is_live & !was_live","--socket-timeout","20","--retries","2","--fragment-retries","2","--format","bestvideo[height<=720]+bestaudio/best[height<=720]/best","--merge-output-format","mp4","--output",source_template,canonical]
+        cmd[1:1]=youtube_pot_args()
         try:
             p=await __import__("starlette.concurrency",fromlist=["run_in_threadpool"]).run_in_threadpool(lambda: subprocess.run(cmd,capture_output=True,text=True,timeout=240))
         except subprocess.TimeoutExpired: raise HTTPException(504,"O YouTube demorou demais para responder")
@@ -220,6 +229,7 @@ async def check_youtube(url: str = Form(...), user: dict = Depends(require_user)
         raise HTTPException(400,"Identificador do vídeo inválido")
     canonical="https://www.youtube.com/watch?v="+video_id
     cmd=["yt-dlp","--no-playlist","--skip-download","--dump-single-json","--no-warnings","--socket-timeout","12","--retries","1",canonical]
+    cmd[1:1]=youtube_pot_args()
     try:
         result=await __import__("starlette.concurrency",fromlist=["run_in_threadpool"]).run_in_threadpool(lambda: subprocess.run(cmd,capture_output=True,text=True,timeout=40))
     except subprocess.TimeoutExpired:
@@ -259,6 +269,7 @@ async def youtube_download(url: str = Form(...), rights_confirmed: bool = Form(F
     template=str(ROOT/(prefix+"%(ext)s"))
     canonical="https://www.youtube.com/watch?v="+video_id
     cmd=["yt-dlp","--js-runtimes","node","--no-playlist","--no-progress","--no-warnings","--max-filesize","500M","--match-filter","!is_live & !was_live","--socket-timeout","20","--retries","1","--fragment-retries","1","-f","bv*[height<=720]+ba/b[height<=720]/b","--merge-output-format","mp4","-o",template,canonical]
+    cmd[1:1]=youtube_pot_args()
     def cleanup():
         for item in ROOT.glob(prefix+"*"):
             if item.is_file(): item.unlink(missing_ok=True)
