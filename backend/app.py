@@ -1,7 +1,8 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header, Depends
 from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 from pathlib import Path
-import subprocess, uuid, os, re
+import subprocess, uuid, os, re, json, math
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,6 +26,7 @@ def require_user(authorization: str = Header(default="")):
             user = json.loads(response.read(65536))
         if not user.get("id"):
             raise HTTPException(401, "Sessão inválida")
+        user["access_token"] = token
         return user
     except HTTPError:
         raise HTTPException(401, "Sessão inválida ou expirada")
@@ -39,7 +41,7 @@ MAX_BYTES = 500 * 1024 * 1024
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "stage": "local-prototype"}
+    return {"status": "ok", "ffmpeg": subprocess.run(["ffmpeg","-version"],capture_output=True,timeout=5).returncode == 0}
 
 @app.post("/clips")
 async def clips(file: UploadFile = File(...), brand: str = Form("VIRALCLIP"), start: float = Form(0), duration: int = Form(45), project_id: str = Form(...), user: dict = Depends(require_user)):
@@ -47,14 +49,25 @@ async def clips(file: UploadFile = File(...), brand: str = Form("VIRALCLIP"), st
         uuid.UUID(project_id)
     except ValueError:
         raise HTTPException(400, "ID de projeto inválido")
-    if duration not in (45, 60) or start < 0:
+    if duration not in (45, 60) or not math.isfinite(start) or start < 0:
         raise HTTPException(400, "Duração deve ser 45 ou 60 segundos e início >= 0")
     if not re.fullmatch(r"[\w @.-]{1,32}", brand, re.UNICODE):
         raise HTTPException(400, "Marca inválida (máximo 32 caracteres)")
-    if file.content_type not in ("video/mp4", "video/quicktime", "video/x-matroska"):
+    if file.content_type not in ("video/mp4", "video/quicktime", "video/x-matroska", "video/webm"):
         raise HTTPException(415, "Formato de vídeo não suportado")
     # Check project ownership through the user's JWT and Supabase RLS.
     # Project ownership is enforced by Supabase on creation; no project data is fetched here.
+    base = os.environ["SUPABASE_URL"].rstrip("/")
+    key = os.environ["SUPABASE_PUBLISHABLE_KEY"]
+    endpoint = base + "/rest/v1/clip_projects?id=eq." + project_id + "&user_id=eq." + user["id"] + "&select=id&limit=1"
+    req = Request(endpoint, headers={"apikey": key, "Authorization": "Bearer " + user["access_token"]})
+    try:
+        with urlopen(req, timeout=8) as response:
+            records = json.loads(response.read(4096))
+        if not records:
+            raise HTTPException(403, "Projeto não pertence ao usuário")
+    except HTTPError:
+        raise HTTPException(503, "Falha ao verificar propriedade do projeto")
     job = uuid.uuid4().hex
     src, out = ROOT / f"{job}.input", ROOT / f"{job}.mp4"
     total = 0
@@ -82,7 +95,7 @@ async def clips(file: UploadFile = File(...), brand: str = Form("VIRALCLIP"), st
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         if result.returncode or not out.exists():
             raise HTTPException(422, "Falha na renderização: " + result.stderr[-400:])
-        return FileResponse(out, media_type="video/mp4", filename="viralclip.mp4")
+        return FileResponse(out, media_type="video/mp4", filename="viralclip.mp4", background=BackgroundTask(out.unlink, missing_ok=True))
     except subprocess.TimeoutExpired:
         raise HTTPException(504, "Tempo de renderização excedido")
     finally:
