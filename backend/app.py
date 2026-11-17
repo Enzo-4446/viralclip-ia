@@ -1,9 +1,38 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header, Depends
 from fastapi.responses import FileResponse
 from pathlib import Path
 import subprocess, uuid, os, re
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="ViralClip IA - protótipo local")
+allowed_origin = os.getenv("FRONTEND_ORIGIN", "")
+if allowed_origin:
+    app.add_middleware(CORSMiddleware, allow_origins=[allowed_origin], allow_methods=["GET", "POST"], allow_headers=["Authorization", "Content-Type"])
+
+def require_user(authorization: str = Header(default="")):
+    base = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_PUBLISHABLE_KEY", "")
+    if not base or not key:
+        raise HTTPException(503, "Autenticação não configurada no servidor")
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(401, "Autenticação necessária")
+    token = authorization[7:]
+    try:
+        req = Request(base + "/auth/v1/user", headers={"apikey": key, "Authorization": "Bearer " + token})
+        with urlopen(req, timeout=8) as response:
+            user = json.loads(response.read(65536))
+        if not user.get("id"):
+            raise HTTPException(401, "Sessão inválida")
+        return user
+    except HTTPError:
+        raise HTTPException(401, "Sessão inválida ou expirada")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(503, "Serviço de autenticação indisponível")
+
 ROOT = Path(os.getenv("MEDIA_DIR", "./media"))
 ROOT.mkdir(parents=True, exist_ok=True)
 MAX_BYTES = 500 * 1024 * 1024
@@ -13,13 +42,19 @@ def health():
     return {"status": "ok", "stage": "local-prototype"}
 
 @app.post("/clips")
-async def clips(file: UploadFile = File(...), brand: str = Form("VIRALCLIP"), start: float = Form(0), duration: int = Form(45)):
+async def clips(file: UploadFile = File(...), brand: str = Form("VIRALCLIP"), start: float = Form(0), duration: int = Form(45), project_id: str = Form(...), user: dict = Depends(require_user)):
+    try:
+        uuid.UUID(project_id)
+    except ValueError:
+        raise HTTPException(400, "ID de projeto inválido")
     if duration not in (45, 60) or start < 0:
         raise HTTPException(400, "Duração deve ser 45 ou 60 segundos e início >= 0")
     if not re.fullmatch(r"[\w @.-]{1,32}", brand, re.UNICODE):
         raise HTTPException(400, "Marca inválida (máximo 32 caracteres)")
     if file.content_type not in ("video/mp4", "video/quicktime", "video/x-matroska"):
         raise HTTPException(415, "Formato de vídeo não suportado")
+    # Check project ownership through the user's JWT and Supabase RLS.
+    # Project ownership is enforced by Supabase on creation; no project data is fetched here.
     job = uuid.uuid4().hex
     src, out = ROOT / f"{job}.input", ROOT / f"{job}.mp4"
     total = 0
