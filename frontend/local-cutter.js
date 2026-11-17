@@ -101,6 +101,7 @@ export async function cutLocally(file,options,status=()=>{},signal=new AbortCont
     audio=new Audio();
     await audio.resume();
     if(audio.state!=='running')throw Error('O navegador bloqueou o áudio. Clique em Gerar novamente.');
+    if(options.watermark)await document.fonts.load('650 16px "Manrope Variable"');
     const ready=waitFor(video,'loadeddata',controller.signal);
     video.src=url;video.load();await ready;
     const segments=planSegments(video.duration,options);
@@ -139,4 +140,5 @@ export async function cutLocally(file,options,status=()=>{},signal=new AbortCont
     URL.revokeObjectURL(url);signal.removeEventListener('abort',abort);document.removeEventListener('visibilitychange',visibility);busy=false;
   }
 }
+
 

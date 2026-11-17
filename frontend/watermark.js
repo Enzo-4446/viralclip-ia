@@ -14,7 +14,8 @@ export function drawWatermark(ctx,width,height,text,time=0) {
   ctx.save();
   const label=text.trim().slice(0,32);
   const size=Math.max(9,Math.round(Math.min(width,height)*.027));
-  ctx.font='600 '+size+'px Georgia, serif';
+  ctx.font='650 '+size+'px "Manrope Variable", "Segoe UI", sans-serif';
+  ctx.letterSpacing=(size*.07)+'px';
   const maxWidth=width*.38;
   const textWidth=Math.min(ctx.measureText(label).width,maxWidth);
   const {x,y}=watermarkPosition(width,height,textWidth,size,time);
@@ -22,7 +23,8 @@ export function drawWatermark(ctx,width,height,text,time=0) {
   const gold=ctx.createLinearGradient(0,y-size,0,y);
   gold.addColorStop(0,'#fff0b0');gold.addColorStop(.45,'#e3c16a');gold.addColorStop(1,'#ad7e2b');
   ctx.fillStyle=gold;ctx.globalAlpha=.88;
-  ctx.shadowColor='rgba(0,0,0,.8)';ctx.shadowBlur=Math.max(2,size*.18);ctx.shadowOffsetY=1;
+  ctx.shadowColor='rgba(0,0,0,.48)';ctx.shadowBlur=Math.max(1,size*.12);ctx.shadowOffsetY=1;
   ctx.fillText(label,x,y,maxWidth);
   ctx.restore();
 }
+

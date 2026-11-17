@@ -63,6 +63,7 @@ export function mountTimeline({preview,root,mode,duration,start,end,watermark,br
   $('cutSelection').onclick=()=>{video?.pause();generate.click();};
   mode.addEventListener('change',render);engine.addEventListener('change',render);watermark.addEventListener('change',paintMark);brand.addEventListener('input',paintMark);
   new MutationObserver(bindVideo).observe(preview,{childList:true});new ResizeObserver(paintMark).observe(preview);
-  bindVideo();
+  bindVideo();document.fonts.ready.then(paintMark);
   return {getSelections:()=>queue.length?queue.map(x=>({...x})):[{start:selected}],setBusy(value){busy=value;if(value){playing=false;video?.pause();}render();},refresh:render};
 }
+

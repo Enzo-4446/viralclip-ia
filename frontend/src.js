@@ -1,3 +1,4 @@
+import '@fontsource-variable/manrope';
 import {mountTimeline} from './timeline.js';
 import {cutLocally} from './local-cutter.js';
 import {unzipSync} from 'fflate';
