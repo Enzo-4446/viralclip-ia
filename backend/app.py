@@ -190,3 +190,52 @@ async def batch_clips(file: UploadFile = File(...), brand: str = Form("VIRALCLIP
         src.unlink(missing_ok=True)
         narration_path=ROOT/(job+".voice")
         narration_path.unlink(missing_ok=True)
+
+# Optional YouTube input for videos that the uploader owns or is authorized to process.
+# Public YouTube streams are not guaranteed accessible on hosted servers.
+@app.post("/clips/youtube")
+async def youtube_clips(url: str = Form(...), project_id: str = Form(...), brand: str = Form("VIRALCLIP"), settings: str = Form("{}"), rights_confirmed: bool = Form(False), user: dict = Depends(require_user)):
+    from editor import options
+    from batch import render_batch
+    if not rights_confirmed:
+        raise HTTPException(400,"Confirme que possui direitos para processar o vídeo")
+    try: uuid.UUID(project_id)
+    except ValueError: raise HTTPException(400,"Projeto inválido")
+    if not re.fullmatch(r"[\w @.-]{1,32}",brand,re.UNICODE):
+        raise HTTPException(400,"Marca inválida")
+    try: options(settings)
+    except ValueError as e: raise HTTPException(400,str(e))
+    parsed=urlparse(url)
+    host=(parsed.hostname or "").lower()
+    if parsed.scheme!="https" or parsed.port not in (None,443) or parsed.username or parsed.password or host not in ("youtube.com","www.youtube.com","m.youtube.com","youtu.be","www.youtu.be"):
+        raise HTTPException(400,"Utilize um link HTTPS válido do YouTube")
+    video_id=(parse_qs(parsed.query).get("v",[None])[0] if parsed.path=="/watch" else parsed.path.strip("/").split("/")[-1])
+    if not video_id or not re.fullmatch(r"[A-Za-z0-9_-]{11}",video_id):
+        raise HTTPException(400,"Identificador do vídeo inválido")
+    canonical="https://www.youtube.com/watch?v="+video_id
+    base=os.environ["SUPABASE_URL"].rstrip("/")
+    key=os.environ["SUPABASE_PUBLISHABLE_KEY"]
+    endpoint=base+"/rest/v1/clip_projects?id=eq."+project_id+"&user_id=eq."+user["id"]+"&select=id&limit=1"
+    try:
+        req=Request(endpoint,headers={"apikey":key,"Authorization":"Bearer "+user["access_token"]})
+        with urlopen(req,timeout=8) as response: records=json.loads(response.read(4096))
+        if not records: raise HTTPException(403,"Projeto não pertence ao usuário")
+    except HTTPError: raise HTTPException(503,"Falha ao verificar projeto")
+    job=uuid.uuid4().hex
+    src=ROOT/(job+".source.mp4");out=ROOT/(job+".zip")
+    try:
+        # Restricted, single-item, bounded transfer. yt-dlp may fail when YouTube restricts access.
+        cmd=["yt-dlp","--no-playlist","--no-progress","--no-warnings","--max-filesize","500M","--match-filter","!is_live & !was_live","--socket-timeout","20","--retries","2","--format","best[ext=mp4][height<=720]/best[height<=720]/best","--merge-output-format","mp4","--output",str(src),canonical]
+        try:
+            p=await __import__("starlette.concurrency",fromlist=["run_in_threadpool"]).run_in_threadpool(lambda: subprocess.run(cmd,capture_output=True,text=True,timeout=240))
+        except subprocess.TimeoutExpired: raise HTTPException(504,"O YouTube demorou demais para responder")
+        if p.returncode or not src.is_file():
+            raise HTTPException(422,"Não foi possível acessar este vídeo pelo servidor. O YouTube pode restringir o acesso; tente enviar o arquivo autorizado.")
+        if src.stat().st_size>MAX_BYTES: raise HTTPException(413,"Vídeo acima do limite de 500 MB")
+        try:
+            await __import__("starlette.concurrency",fromlist=["run_in_threadpool"]).run_in_threadpool(render_batch,src,out,brand,10,settings,None)
+        except (ValueError,RuntimeError,subprocess.TimeoutExpired) as e:
+            raise HTTPException(422,"Falha ao gerar cortes: "+str(e)[:250])
+        return FileResponse(out,media_type="application/zip",filename="viralclip_youtube.zip",background=BackgroundTask(out.unlink,missing_ok=True))
+    finally:
+        src.unlink(missing_ok=True)
