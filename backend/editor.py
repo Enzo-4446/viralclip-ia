@@ -27,7 +27,7 @@ def has_audio(path):
     return bool(p.stdout.strip())
 
 def make_vf(o,brand):
-    w=int(o.get('quality',1080));aspect=o.get('aspect','9:16');w,h=({'9:16':(w,w*16//9),'1:1':(w,w),'16:9':(w*16//9,w)})[aspect]
+    w=int(o.get('quality',720));aspect=o.get('aspect','9:16');w,h=({'9:16':(w,w*16//9),'1:1':(w,w),'16:9':(w*16//9,w)})[aspect]
     if o.get('framing','center')=='blur':
         vf=f'split=2[bg][fg];[bg]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},boxblur=30:10[back];[fg]scale={w}:{h}:force_original_aspect_ratio=decrease[front];[back][front]overlay=(W-w)/2:(H-h)/2,setsar=1'
     else: vf=f'scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1'
@@ -85,7 +85,7 @@ def render(src,dst,brand,start,duration,raw='{}',voice=None):
     o=options(raw)
     with tempfile.TemporaryDirectory() as td:
         folder=Path(td);base=folder/'base.mp4'
-        w=int(o.get('quality',1080));fps=int(o.get('fps',30));crf=int(o.get('crf',20))
+        w=int(o.get('quality',720));fps=int(o.get('fps',30));crf=int(o.get('crf',20))
         label=folder/'watermark.txt';label.write_text(brand,encoding='utf-8')
         vf=make_vf(o,brand)
         # Textfile path is controlled and has no user-provided syntax.
@@ -95,7 +95,7 @@ def render(src,dst,brand,start,duration,raw='{}',voice=None):
         cmd=['ffmpeg','-nostdin','-y','-hide_banner','-loglevel','error','-ss',str(start),'-i',str(src),'-t',str(duration),'-filter_complex',vf+'[final]','-map','[final]']
         if has_audio(src):cmd+=['-map','0:a:0','-c:a','aac','-b:a','192k']
         else:cmd+=['-an']
-        cmd+=['-c:v','libx264','-preset','veryfast','-crf',str(crf),'-pix_fmt','yuv420p','-r',str(fps),'-movflags','+faststart',str(base)]
+        cmd+=['-c:v','libx264','-threads','2','-preset','ultrafast','-crf',str(crf),'-pix_fmt','yuv420p','-r',str(fps),'-movflags','+faststart',str(base)]
         run(cmd)
         mixed=base
         if voice is not None:
