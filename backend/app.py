@@ -44,30 +44,13 @@ def health():
     return {"status": "ok", "ffmpeg": subprocess.run(["ffmpeg","-version"],capture_output=True,timeout=5).returncode == 0, "node": subprocess.run(["node","--version"],capture_output=True,text=True,timeout=5).stdout.strip(), "yt_dlp": subprocess.run(["yt-dlp","--version"],capture_output=True,text=True,timeout=5).stdout.strip()}
 
 @app.post("/clips")
-async def clips(file: UploadFile = File(...), brand: str = Form("VIRALCLIP"), start: float = Form(0), duration: int = Form(45), project_id: str = Form(...), settings: str = Form("{}"), voice: UploadFile | None = File(None), user: dict = Depends(require_user)):
-    try:
-        uuid.UUID(project_id)
-    except ValueError:
-        raise HTTPException(400, "ID de projeto inválido")
+async def clips(file: UploadFile = File(...), brand: str = Form("VIRALCLIP"), start: float = Form(0), duration: int = Form(45), project_id: str = Form(""), settings: str = Form("{}"), voice: UploadFile | None = File(None), user: dict = Depends(require_user)):
     if duration not in (30, 45, 60, 90) or not math.isfinite(start) or start < 0:
         raise HTTPException(400, "Duração deve ser 30, 45, 60 ou 90 segundos e início >= 0")
     if not re.fullmatch(r"[\w @.-]{1,32}", brand, re.UNICODE):
         raise HTTPException(400, "Marca inválida (máximo 32 caracteres)")
     if file.content_type not in ("video/mp4", "video/quicktime", "video/x-matroska", "video/webm"):
         raise HTTPException(415, "Formato de vídeo não suportado")
-    # Check project ownership through the user's JWT and Supabase RLS.
-    # Project ownership is enforced by Supabase on creation; no project data is fetched here.
-    base = os.environ["SUPABASE_URL"].rstrip("/")
-    key = os.environ["SUPABASE_PUBLISHABLE_KEY"]
-    endpoint = base + "/rest/v1/clip_projects?id=eq." + project_id + "&user_id=eq." + user["id"] + "&select=id&limit=1"
-    req = Request(endpoint, headers={"apikey": key, "Authorization": "Bearer " + user["access_token"]})
-    try:
-        with urlopen(req, timeout=8) as response:
-            records = json.loads(response.read(4096))
-        if not records:
-            raise HTTPException(403, "Projeto não pertence ao usuário")
-    except HTTPError:
-        raise HTTPException(503, "Falha ao verificar propriedade do projeto")
     job = uuid.uuid4().hex
     src, out = ROOT / f"{job}.input", ROOT / f"{job}.mp4"
     total = 0
@@ -137,26 +120,12 @@ def youtube_metadata(url: str):
 
 # Batch mode: authenticated upload, ownership check and ten scene-aware exports.
 @app.post("/clips/batch")
-async def batch_clips(file: UploadFile = File(...), brand: str = Form("VIRALCLIP"), project_id: str = Form(...), settings: str = Form("{}"), voice: UploadFile | None = File(None), user: dict = Depends(require_user)):
+async def batch_clips(file: UploadFile = File(...), brand: str = Form("VIRALCLIP"), project_id: str = Form(""), settings: str = Form("{}"), voice: UploadFile | None = File(None), user: dict = Depends(require_user)):
     from batch import render_batch
-    try:
-        uuid.UUID(project_id)
-    except ValueError:
-        raise HTTPException(400, "ID de projeto inválido")
     if not re.fullmatch(r"[\w @.-]{1,32}", brand, re.UNICODE):
         raise HTTPException(400, "Marca inválida")
     if file.content_type not in ("video/mp4","video/quicktime","video/x-matroska","video/webm"):
         raise HTTPException(415, "Formato de vídeo não suportado")
-    base=os.environ["SUPABASE_URL"].rstrip("/")
-    key=os.environ["SUPABASE_PUBLISHABLE_KEY"]
-    endpoint=base+"/rest/v1/clip_projects?id=eq."+project_id+"&user_id=eq."+user["id"]+"&select=id&limit=1"
-    try:
-        req=Request(endpoint,headers={"apikey":key,"Authorization":"Bearer "+user["access_token"]})
-        with urlopen(req,timeout=8) as response:
-            records=json.loads(response.read(4096))
-        if not records: raise HTTPException(403,"Projeto não pertence ao usuário")
-    except HTTPError:
-        raise HTTPException(503,"Não foi possível verificar o projeto")
     job=uuid.uuid4().hex
     src=ROOT/(job+".input")
     output=ROOT/(job+".zip")
@@ -194,13 +163,11 @@ async def batch_clips(file: UploadFile = File(...), brand: str = Form("VIRALCLIP
 # Optional YouTube input for videos that the uploader owns or is authorized to process.
 # Public YouTube streams are not guaranteed accessible on hosted servers.
 @app.post("/clips/youtube")
-async def youtube_clips(url: str = Form(...), project_id: str = Form(...), brand: str = Form("VIRALCLIP"), settings: str = Form("{}"), rights_confirmed: bool = Form(False), user: dict = Depends(require_user)):
+async def youtube_clips(url: str = Form(...), project_id: str = Form(""), brand: str = Form("VIRALCLIP"), settings: str = Form("{}"), rights_confirmed: bool = Form(False), user: dict = Depends(require_user)):
     from editor import options
     from batch import render_batch
     if not rights_confirmed:
         raise HTTPException(400,"Confirme que possui direitos para processar o vídeo")
-    try: uuid.UUID(project_id)
-    except ValueError: raise HTTPException(400,"Projeto inválido")
     if not re.fullmatch(r"[\w @.-]{1,32}",brand,re.UNICODE):
         raise HTTPException(400,"Marca inválida")
     try: options(settings)
@@ -213,14 +180,6 @@ async def youtube_clips(url: str = Form(...), project_id: str = Form(...), brand
     if not video_id or not re.fullmatch(r"[A-Za-z0-9_-]{11}",video_id):
         raise HTTPException(400,"Identificador do vídeo inválido")
     canonical="https://www.youtube.com/watch?v="+video_id
-    base=os.environ["SUPABASE_URL"].rstrip("/")
-    key=os.environ["SUPABASE_PUBLISHABLE_KEY"]
-    endpoint=base+"/rest/v1/clip_projects?id=eq."+project_id+"&user_id=eq."+user["id"]+"&select=id&limit=1"
-    try:
-        req=Request(endpoint,headers={"apikey":key,"Authorization":"Bearer "+user["access_token"]})
-        with urlopen(req,timeout=8) as response: records=json.loads(response.read(4096))
-        if not records: raise HTTPException(403,"Projeto não pertence ao usuário")
-    except HTTPError: raise HTTPException(503,"Falha ao verificar projeto")
     job=uuid.uuid4().hex
     src=ROOT/(job+".source.mp4");out=ROOT/(job+".zip")
     source_template=str(ROOT/(job+".source.%(ext)s"))
