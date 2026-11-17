@@ -7,13 +7,13 @@ def options(raw):
     try: o=json.loads(raw or '{}')
     except (ValueError,TypeError): raise ValueError('Configuração inválida')
     if not isinstance(o,dict): raise ValueError('Configuração inválida')
-    for key,allowed in {'quality':[720,1080],'fps':[30,60],'crf':[17,20,24],'framing':['center','blur'],'captionLanguage':['auto','pt','es','en'],'captionStyle':['dynamic','clean','bold']}.items():
+    for key,allowed in {'quality':[720,1080],'fps':[30,60],'crf':[17,20,24],'framing':['center','blur'],'captionLanguage':['auto','pt','es','en'],'captionStyle':['dynamic','clean','bold'],'aspect':['9:16','1:1','16:9']}.items():
         if o.get(key,allowed[0]) not in allowed: raise ValueError('Parâmetro inválido: '+key)
     for key,lo,hi in [('originalVolume',0,150),('duckDb',-30,-6),('releaseMs',100,1500)]:
         try: v=float(o.get(key,{'originalVolume':100,'duckDb':-18,'releaseMs':500}[key]))
         except (ValueError,TypeError): raise ValueError('Valor inválido: '+key)
         if not math.isfinite(v) or not lo<=v<=hi: raise ValueError('Valor fora do intervalo: '+key)
-    for key in ('captions','ducking'):
+    for key in ('captions','ducking','watermark'):
         if key in o and not isinstance(o[key],bool): raise ValueError('Opção inválida: '+key)
     return o
 
@@ -27,7 +27,7 @@ def has_audio(path):
     return bool(p.stdout.strip())
 
 def make_vf(o,brand):
-    w=int(o.get('quality',1080));h=w*16//9
+    w=int(o.get('quality',1080));aspect=o.get('aspect','9:16');w,h=({'9:16':(w,w*16//9),'1:1':(w,w),'16:9':(w*16//9,w)})[aspect]
     if o.get('framing','center')=='blur':
         vf=f'split=2[bg][fg];[bg]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},boxblur=30:10[back];[fg]scale={w}:{h}:force_original_aspect_ratio=decrease[front];[back][front]overlay=(W-w)/2:(H-h)/2,setsar=1'
     else: vf=f'scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1'
@@ -90,7 +90,8 @@ def render(src,dst,brand,start,duration,raw='{}',voice=None):
         vf=make_vf(o,brand)
         # Textfile path is controlled and has no user-provided syntax.
         draw=f"drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:textfile={label}:fontsize={max(20,w//32)}:fontcolor=white@0.75:borderw=2:bordercolor=black@0.6:x=(w-text_w)/2:y=h-text_h-{w//9}"
-        vf=vf+','+draw if o.get('framing','center')=='center' else vf+'[v];[v]'+draw
+        if o.get('watermark',True):
+            vf=vf+','+draw if o.get('framing','center')=='center' else vf+'[v];[v]'+draw
         cmd=['ffmpeg','-nostdin','-y','-hide_banner','-loglevel','error','-ss',str(start),'-i',str(src),'-t',str(duration),'-filter_complex',vf+'[final]','-map','[final]']
         if has_audio(src):cmd+=['-map','0:a:0','-c:a','aac','-b:a','192k']
         else:cmd+=['-an']
