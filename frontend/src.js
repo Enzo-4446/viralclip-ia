@@ -50,3 +50,25 @@ const oldModeChange=$('mode').onchange;$('mode').onchange=()=>{oldModeChange();$
 
 const updateGenerateState=()=>{const yt=sourceMode==='youtube';$('manualFields').hidden=yt||$('mode').value!=='single';const ready=yt?Boolean(youtubeId($('youtubeUrl').value.trim())&&$('rights').checked):Boolean($('file').files[0]);$('generate').disabled=!ready;$('generate').title=ready?'Gerar vídeos com as configurações escolhidas':yt?'Informe um link e confirme os direitos de edição':'Selecione um vídeo';$('generate').textContent=yt?'Gerar clipes':$('mode').value==='batch'?'Gerar clipes':'Gerar MP4';$('mode').disabled=yt;$('recordVoice').disabled=yt;$('voiceFile').disabled=yt;$('count').disabled=!yt&&$('mode').value==='single';$('clipDuration').disabled=!yt&&$('mode').value==='single';};
 $('youtubeUrl').addEventListener('input',updateGenerateState);$('rights').addEventListener('change',updateGenerateState);$('file').addEventListener('change',updateGenerateState);$('mode').addEventListener('change',updateGenerateState);updateGenerateState();
+
+
+let lastYoutubeCheck=null;
+$('checkYoutube').onclick=async()=>{
+  const url=$('youtubeUrl').value.trim(),id=youtubeId(url);
+  if(!id){$('youtubeCheck').textContent='Cole um link válido antes de verificar.';return}
+  const {data:{session}}=await sb.auth.getSession();
+  if(!session){$('youtubeCheck').textContent='Faça login para verificar o link.';return}
+  const button=$('checkYoutube');button.disabled=true;
+  $('youtubeCheck').textContent='Verificando o acesso pelo servidor...';
+  try{
+    const body=new FormData();body.append('url',url);
+    const response=await fetch(api+'/youtube/check',{method:'POST',headers:{Authorization:'Bearer '+session.access_token},body});
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok)throw Error(data.detail||'Erro '+response.status);
+    lastYoutubeCheck={id,status:data.status};
+    const label=data.status==='available'?'✓ Metadados acessíveis':data.status==='blocked'?'⚠ Acesso bloqueado':'? Verificação inconclusiva';
+    $('youtubeCheck').textContent=label+' — '+(data.title?data.title+' — ':'')+data.message;
+  }catch(error){lastYoutubeCheck=null;$('youtubeCheck').textContent='Falha ao verificar: '+error.message}
+  finally{button.disabled=false}
+};
+$('youtubeUrl').addEventListener('input',()=>{lastYoutubeCheck=null;$('youtubeCheck').textContent='Link alterado. Verifique o acesso pelo servidor antes de gerar.'});
