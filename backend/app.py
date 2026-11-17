@@ -414,3 +414,6 @@ def job_download(job_id:str,user:dict=Depends(require_user)):
         output=Path(job["output"]);mode=job["mode"]
     if not output.is_file(): raise HTTPException(410,"Arquivo expirado")
     return FileResponse(output,media_type="application/zip" if mode=="batch" else "video/mp4",filename="viralclip_cortes.zip" if mode=="batch" else "viralclip.mp4")
+
+from job_routes import router as jobs_router
+app.include_router(jobs_router)
