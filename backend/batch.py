@@ -21,10 +21,10 @@ def scene_times(path, duration):
     except (subprocess.TimeoutExpired,ValueError):
         return []
 
-def suggest(duration, scenes, count=10):
+def suggest(duration, scenes, count=10, clip_length=60):
     # Distribute selections across the entire source to reduce repeated content.
-    length=min(30.,max(12.,duration/(count*1.15)))
-    if duration<length*2: count=max(1,int(duration//length))
+    length=min(float(clip_length),duration)
+    if duration<length*count: count=max(1,int(duration//length))
     slots=max(1,count)
     results=[]
     for i in range(slots):
@@ -40,7 +40,12 @@ def suggest(duration, scenes, count=10):
 def render_batch(src, output_zip, brand, max_count=10, settings="{}", voice=None):
     duration=probe(src)
     scenes=scene_times(src,duration)
-    segments=suggest(duration,scenes,max_count)
+    from editor import options
+    config=options(settings)
+    count=int(config.get("count",max_count))
+    clip_length=int(config.get("clipDuration",60))
+    if not 1<=count<=10 or clip_length not in (30,45,60,90): raise ValueError("Quantidade ou duração inválida")
+    segments=suggest(duration,scenes,count,clip_length)
     with tempfile.TemporaryDirectory() as folder:
         folder=Path(folder)
         manifest={"method":"scene-boundary heuristic (not AI semantic analysis)","source_duration":round(duration,2),"clips":segments}
