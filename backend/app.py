@@ -223,14 +223,18 @@ async def youtube_clips(url: str = Form(...), project_id: str = Form(...), brand
     except HTTPError: raise HTTPException(503,"Falha ao verificar projeto")
     job=uuid.uuid4().hex
     src=ROOT/(job+".source.mp4");out=ROOT/(job+".zip")
+    source_template=str(ROOT/(job+".source.%(ext)s"))
     try:
         # Restricted, single-item, bounded transfer. yt-dlp may fail when YouTube restricts access.
-        cmd=["yt-dlp","--no-playlist","--no-progress","--no-warnings","--max-filesize","500M","--match-filter","!is_live & !was_live","--socket-timeout","20","--retries","2","--format","best[ext=mp4][height<=720]/best[height<=720]/best","--merge-output-format","mp4","--output",str(src),canonical]
+        cmd=["yt-dlp","--no-playlist","--no-progress","--no-warnings","--max-filesize","500M","--match-filter","!is_live & !was_live","--socket-timeout","20","--retries","2","--format","best[ext=mp4][height<=720]/best[height<=720]/best","--merge-output-format","mp4","--output",source_template,canonical]
         try:
             p=await __import__("starlette.concurrency",fromlist=["run_in_threadpool"]).run_in_threadpool(lambda: subprocess.run(cmd,capture_output=True,text=True,timeout=240))
         except subprocess.TimeoutExpired: raise HTTPException(504,"O YouTube demorou demais para responder")
-        if p.returncode or not src.is_file():
+        if p.returncode:
             raise HTTPException(422,"Não foi possível acessar este vídeo pelo servidor. O YouTube pode restringir o acesso; tente enviar o arquivo autorizado.")
+        candidates=[p for p in ROOT.glob(job+".source.*") if p.is_file() and not p.name.endswith((".part",".ytdl"))]
+        if not candidates: raise HTTPException(422,"Arquivo de vídeo não encontrado após transferência")
+        src=candidates[0]
         if src.stat().st_size>MAX_BYTES: raise HTTPException(413,"Vídeo acima do limite de 500 MB")
         try:
             await __import__("starlette.concurrency",fromlist=["run_in_threadpool"]).run_in_threadpool(render_batch,src,out,brand,10,settings,None)
@@ -238,4 +242,5 @@ async def youtube_clips(url: str = Form(...), project_id: str = Form(...), brand
             raise HTTPException(422,"Falha ao gerar cortes: "+str(e)[:250])
         return FileResponse(out,media_type="application/zip",filename="viralclip_youtube.zip",background=BackgroundTask(out.unlink,missing_ok=True))
     finally:
-        src.unlink(missing_ok=True)
+        for temporary in ROOT.glob(job+".source.*"):
+            temporary.unlink(missing_ok=True)
