@@ -8,7 +8,7 @@ from urllib.error import HTTPError
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="ViralClip IA - protótipo local")
-allowed_origin = os.getenv("FRONTEND_ORIGIN", "")
+allowed_origin = os.getenv("FRONTEND_ORIGIN", "https://enzo-4446.github.io")
 if allowed_origin:
     app.add_middleware(CORSMiddleware, allow_origins=[allowed_origin], allow_methods=["GET", "POST"], allow_headers=["Authorization", "Content-Type"])
 
