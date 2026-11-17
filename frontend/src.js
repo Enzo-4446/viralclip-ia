@@ -141,3 +141,22 @@ $('importDirectMedia').onclick=async()=>{
   }catch(error){$('directMediaStatus').textContent=error.message}
   finally{button.disabled=false}
 };
+
+
+$('clearProjects').onclick=async()=>{
+  if(!window.confirm('Excluir permanentemente todos os registros do seu histórico de projetos?'))return;
+  const {data:{session}}=await sb.auth.getSession();
+  if(!session){$('historyStatus').textContent='Faça login novamente.';return}
+  const button=$('clearProjects');button.disabled=true;
+  try{
+    const {data:existing,error:readError}=await sb.from('clip_projects').select('id').eq('user_id',session.user.id);
+    if(readError)throw readError;
+    if(!existing?.length){$('historyStatus').textContent='Histórico já está vazio.';return}
+    const {data:removed,error}=await sb.from('clip_projects').delete().eq('user_id',session.user.id).select('id');
+    if(error)throw error;
+    if((removed||[]).length!==existing.length)throw Error('O banco não permitiu excluir todos os registros. Verifique a política de exclusão do Supabase.');
+    $('historyStatus').textContent='Histórico apagado ('+removed.length+' registros).';
+    await loadProjects();
+  }catch(error){$('historyStatus').textContent='Falha ao limpar histórico: '+error.message}
+  finally{button.disabled=false}
+};
