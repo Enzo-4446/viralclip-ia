@@ -10,11 +10,13 @@ export function planSegments(total,{mode,count,clipDuration,start,duration}) {
   if (!Number.isFinite(first)||first<0||first>=total) throw Error('O início está fora da duração do vídeo.');
   const limit=mode==='single'?1:Number(count);
   if (!Number.isInteger(limit)||limit<1||limit>10) throw Error('Escolha de 1 a 10 clipes.');
+  // Honor the requested count. Short sources are divided into shorter, distinct clips.
+  const step=mode==='batch'?Math.min(length,total/limit):length;
+  if(mode==='batch'&&step<.5)throw Error('Vídeo muito curto para '+limit+' clipes. Reduza a quantidade.');
   const segments=[];
   for(let i=0;i<limit;i++) {
-    const offset=first+i*length;
-    if(offset>=total-.01) break;
-    segments.push({start:offset,length:Math.min(length,total-offset)});
+    const offset=first+i*step;
+    segments.push({start:offset,length:Math.min(step,total-offset)});
   }
   return segments;
 }
@@ -98,6 +100,8 @@ export async function cutLocally(file,options,status=()=>{},signal=new AbortCont
     const ready=waitFor(video,'loadeddata',controller.signal);
     video.src=url;video.load();await ready;
     const segments=planSegments(video.duration,options);
+    const shortened=options.mode==='batch'&&segments[0].length<Number(options.clipDuration)-.01;
+    const report=message=>status((shortened?'Vídeo de '+video.duration.toFixed(1)+'s: '+segments.length+' clipes de aproximadamente '+segments[0].length.toFixed(1)+'s (ajustados para não repetir trechos). ':'')+message);
     // Limit recording to 1080p to avoid excessive encoder memory on mobile.
     const scale=Math.min(1,1080/Math.max(video.videoWidth,video.videoHeight));
     canvas.width=Math.max(2,Math.round(video.videoWidth*scale/2)*2);
@@ -111,16 +115,16 @@ export async function cutLocally(file,options,status=()=>{},signal=new AbortCont
     try{wakeLock=await navigator.wakeLock?.request('screen');}catch{}
     const files=[];
     for(let i=0;i<segments.length;i++) {
-      status('Preparando clipe '+(i+1)+' de '+segments.length+'...');
-      const blob=await recordSegment(video,canvas,stream,segments[i],format,status,i,segments.length,controller.signal);
+      report('Preparando clipe '+(i+1)+' de '+segments.length+'...');
+      const blob=await recordSegment(video,canvas,stream,segments[i],format,report,i,segments.length,controller.signal);
       files.push({name:'viralclip_'+String(i+1).padStart(2,'0')+'.'+format.extension,blob,type:blob.type});
     }
-    if(options.mode==='single')return {blob:files[0].blob,files,zip:false,extension:format.extension};
+    if(options.mode==='single')return {blob:files[0].blob,files,zip:false,extension:format.extension,notice:''};
     status('Montando ZIP local...');
     const entries={};
     for(const item of files)entries[item.name]=new Uint8Array(await item.blob.arrayBuffer());
     const archive=zipSync(entries,{level:0});
-    return {blob:new Blob([archive],{type:'application/zip'}),files,zip:true,extension:format.extension};
+    return {blob:new Blob([archive],{type:'application/zip'}),files,zip:true,extension:format.extension,notice:shortened?'Duração ajustada para aproximadamente '+segments[0].length.toFixed(1)+' segundos por clipe, sem repetir trechos.':''};
   } catch(error) {
     if(controller.signal.aborted)throw new DOMException(document.hidden?'Corte interrompido: mantenha a aba visível durante a exportação.':'Corte cancelado.','AbortError');
     throw error;

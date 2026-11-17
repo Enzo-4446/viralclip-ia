@@ -54,7 +54,7 @@ async function generateLocal(f,title,session){
     const url=URL.createObjectURL(result.blob);resultUrls.push(url);
     $('download').href=url;$('download').download=result.zip?'viralclip_cortes.zip':'viralclip.'+result.extension;
     $('download').textContent=result.zip?'Baixar todos em ZIP':'Baixar '+result.extension.toUpperCase();$('download').hidden=false;
-    status(result.files.length+' clipe(s) gerado(s) localmente, sem enviar o vídeo ao servidor.');
+    status(result.files.length+' clipe(s) gerado(s) localmente, sem enviar o vídeo ao servidor. '+(result.notice||''));
     const {error}=await sb.from('clip_projects').insert({user_id:session.user.id,title,watermark_text:'',rights_confirmed:true,source_kind:'upload'});
     if(error)console.warn('Histórico:',error.message);
     await loadProjects();
