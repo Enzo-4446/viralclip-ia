@@ -11,7 +11,9 @@
   "dependencies": {
     "@supabase/supabase-js": "2.57.0",
     "vite": "7.1.7",
-    "fflate": "0.8.2"
+    "fflate": "0.8.2",
+    "@ffmpeg/ffmpeg": "0.12.15",
+    "@ffmpeg/util": "0.12.2"
   },
   "devDependencies": {}
 }
