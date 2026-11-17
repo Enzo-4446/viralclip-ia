@@ -52,3 +52,37 @@ async def clips(file: UploadFile = File(...), brand: str = Form("VIRALCLIP"), st
         raise HTTPException(504, "Tempo de renderização excedido")
     finally:
         src.unlink(missing_ok=True)
+
+
+# The MVP is intentionally local-only. Add authentication, job isolation and quotas
+# before exposing it to the public internet.
+from urllib.parse import urlparse, parse_qs
+from urllib.request import urlopen, Request
+import json
+
+@app.get("/")
+def home():
+    return FileResponse(Path(__file__).with_name("index.html"), media_type="text/html")
+
+@app.get("/youtube/metadata")
+def youtube_metadata(url: str):
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    video_id = None
+    if host in ("youtube.com", "www.youtube.com", "m.youtube.com") and parsed.path == "/watch":
+        video_id = parse_qs(parsed.query).get("v", [None])[0]
+    elif host in ("youtu.be", "www.youtu.be"):
+        video_id = parsed.path.strip("/")
+    elif host in ("youtube.com", "www.youtube.com") and parsed.path.startswith("/shorts/"):
+        video_id = parsed.path.split("/")[2]
+    if parsed.scheme != "https" or not video_id or not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
+        raise HTTPException(400, "Informe um link válido de vídeo do YouTube")
+    canonical = "https://www.youtube.com/watch?v=" + video_id
+    endpoint = "https://www.youtube.com/oembed?url=" + canonical + "&format=json"
+    try:
+        req = Request(endpoint, headers={"User-Agent": "ViralClipIA/0.1"})
+        with urlopen(req, timeout=8) as response:
+            data = json.loads(response.read(16384))
+        return {"title": data.get("title"), "author_name": data.get("author_name"), "url": canonical, "download_available": False}
+    except Exception:
+        raise HTTPException(404, "Metadados indisponíveis; confira se o vídeo é público")
