@@ -49,8 +49,8 @@ async def clips(file: UploadFile = File(...), brand: str = Form("VIRALCLIP"), st
         uuid.UUID(project_id)
     except ValueError:
         raise HTTPException(400, "ID de projeto inválido")
-    if duration not in (45, 60) or not math.isfinite(start) or start < 0:
-        raise HTTPException(400, "Duração deve ser 45 ou 60 segundos e início >= 0")
+    if duration not in (30, 45, 60, 90) or not math.isfinite(start) or start < 0:
+        raise HTTPException(400, "Duração deve ser 30, 45, 60 ou 90 segundos e início >= 0")
     if not re.fullmatch(r"[\w @.-]{1,32}", brand, re.UNICODE):
         raise HTTPException(400, "Marca inválida (máximo 32 caracteres)")
     if file.content_type not in ("video/mp4", "video/quicktime", "video/x-matroska", "video/webm"):
