@@ -1,7 +1,7 @@
 import {createClipVault} from './clip-vault.js';
 import '@fontsource-variable/manrope';
 import {mountTimeline} from './timeline.js';
-import {cutLocally} from './local-cutter.js';
+import {cutLocally,planSegments} from './local-cutter.js';
 import {unzipSync} from 'fflate';
 import {createClient} from '@supabase/supabase-js';
 const env=import.meta.env;
@@ -45,6 +45,7 @@ async function generateLocal(f,title,session){
   if($('watermark').checked&&!$('brand').value.trim()){status('Informe o nome da marca d’água.');return;}
   const selections=$('mode').value==='single'?manualTimeline?.getSelections():undefined;
   localBusy=true;localController=new AbortController();manualTimeline?.setBusy(true);
+  $('resetClipRange').hidden=true;
   $('cancelLocal').hidden=false;
   updateGenerateState();
   try{
@@ -67,7 +68,7 @@ async function generateLocal(f,title,session){
     const {error}=await sb.from('clip_projects').insert({user_id:session.user.id,title,watermark_text:$('watermark').checked?$('brand').value.trim():'',rights_confirmed:true,source_kind:'upload'});
     if(error)console.warn('Histórico:',error.message);
     await loadProjects();
-  }catch(e){status('Não foi possível concluir: '+(e?.message||String(e)||'erro desconhecido')+'');console.error(e)}
+  }catch(e){status('Não foi possível concluir.\n\n'+(e?.message||String(e)||'Tente selecionar o vídeo novamente.'));$('resetClipRange').hidden=!e?.resetRange;console.error(e)}
   finally{localBusy=false;localController=null;manualTimeline?.setBusy(false);$('cancelLocal').hidden=true;updateGenerateState()}
 }
 $('cancelLocal').onclick=()=>localController?.abort();
@@ -242,3 +243,27 @@ manualTimeline=mountTimeline({preview:$('videoPreview'),root:$('manualTimeline')
 
 
 $('uploadSavedClips').onchange=async()=>{const files=Array.from($('uploadSavedClips').files);if(!files.length)return;const {data:{session}}=await sb.auth.getSession();if(!session){$('savedClipsStatus').textContent='Entre na sua conta para enviar os cortes.';return;}const button=$('uploadSavedClips');button.disabled=true;try{await vault.saveFiles(files.map(blob=>({name:blob.name,blob})),'Corte importado',session.user.id);}finally{button.disabled=false;button.value='';}};
+
+function updateClipGuidance(){
+  const note=$('clipGuidance'),video=$('videoPreview').querySelector('video');
+  note.hidden=sourceMode!=='upload'||!localEngine();
+  if(note.hidden)return;
+  if(!video||!Number.isFinite(video.duration)){note.textContent='1. Clique em “Enviar vídeo” e selecione o arquivo.\n2. Aguarde a prévia carregar.\n3. Escolha o modo, a duração e a quantidade; aqui aparecerá o que cabe no seu vídeo.';return;}
+  const total=video.duration,usable=Math.max(0,total-20);
+  const header='Seu vídeo: '+total.toFixed(1)+'s. Ignorando 10s do início e 10s do final, sobram '+usable.toFixed(1)+'s.\n';
+  try{
+    const options={mode:$('mode').value,count:Number($('count').value),clipDuration:Number($('clipDuration').value),start:$('mode').value==='single'?10:$('start').value,end:$('end').value,duration:Number($('duration').value),selections:$('mode').value==='single'?manualTimeline?.getSelections():undefined};
+    const parts=planSegments(total,options);
+    $('resetClipRange').hidden=true;note.classList.remove('needs-correction');note.textContent=header+'Configuração pronta: '+parts.length+' clipe(s) de '+parts[0].length+'s. O primeiro vai de '+parts[0].start.toFixed(1)+'s até '+(parts[0].start+parts[0].length).toFixed(1)+'s.\n'+($('mode').value==='single'?'Arraste a seleção abaixo da prévia e clique em “Cortar trecho”. Use “Adicionar trecho” para escolher vários.':'Confira os valores e clique em “Gerar clipes”.');
+  }catch(error){$('resetClipRange').hidden=!error.resetRange;note.classList.add('needs-correction');note.textContent=header+error.message;}
+}
+let guidanceVideo=null;
+function bindClipGuidance(){const video=$('videoPreview').querySelector('video');if(video!==guidanceVideo){guidanceVideo=video;video?.addEventListener('loadedmetadata',updateClipGuidance);}updateClipGuidance();}
+new MutationObserver(bindClipGuidance).observe($('videoPreview'),{childList:true});
+for(const id of ['start','end','count','duration','clipDuration','mode','processingEngine']){ $(id).addEventListener('input',updateClipGuidance);$(id).addEventListener('change',updateClipGuidance);}
+$('manualTimeline').addEventListener('input',()=>queueMicrotask(updateClipGuidance));
+$('manualTimeline').addEventListener('click',()=>queueMicrotask(updateClipGuidance));
+$('tabUpload').addEventListener('click',updateClipGuidance);$('tabYoutube').addEventListener('click',updateClipGuidance);
+$('resetClipRange').onclick=()=>{$('start').value='10';$('end').value='';$('start').dispatchEvent(new Event('input'));$('end').dispatchEvent(new Event('input'));$('resetClipRange').hidden=true;$('status').textContent='Intervalo corrigido: início em 10 segundos e final automático, 10 segundos antes de acabar o vídeo. Confira a quantidade e a duração no aviso acima e clique em “Gerar clipes” novamente.';updateClipGuidance();};
+bindClipGuidance();
+

@@ -3,24 +3,32 @@ import {zipSync} from 'fflate';
 
 // Native media pipeline: no WASM, remote encoder or video upload.
 export function planSegments(total,{mode,count,clipDuration,start,end,duration,selections}) {
-  if(!Number.isFinite(total)||total<=20)throw Error('O vídeo precisa ter mais de 20 segundos: os primeiros e os últimos 10 segundos são ignorados.');
+  if(!Number.isFinite(total))throw Error('Não consegui ler a duração do vídeo. Em “Enviar vídeo”, selecione o arquivo novamente e aguarde a prévia carregar. Se a prévia não abrir, tente outro arquivo MP4.');
+  if(total<=20)throw Error('Seu vídeo tem '+total.toFixed(1)+' segundos. Os primeiros 10 e os últimos 10 segundos são ignorados, então não sobra espaço para cortar. Selecione um vídeo de pelo menos 50 segundos para gerar um corte de 30 segundos.');
   if(!['single','batch'].includes(mode))throw Error('Modo de corte inválido.');
   const first=Math.max(10,start==null||start===''?10:Number(start));
   const last=Math.min(total-10,end==null||end===''?total-10:Number(end));
-  if(!Number.isFinite(first)||!Number.isFinite(last)||first>=last)throw Error('Escolha um intervalo válido entre 10s e '+(total-10).toFixed(1)+'s.');
+  if(!Number.isFinite(first)||!Number.isFinite(last)||first>=last){
+    const error=Error('O início e o final escolhidos não formam um intervalo para cortar.\nSeu vídeo tem '+total.toFixed(1)+' segundos. Depois de ignorar 10 segundos de cada ponta, você pode usar de 10 até '+(total-10).toFixed(1)+' segundos.\nValores preenchidos: “Começar em” = '+(start==null||start===''?'vazio':String(start))+'; “Terminar em” = '+(end==null||end===''?'vazio (automático)':String(end))+'.\nComo corrigir:\n1. Em “Começar em (segundos)”, digite 10.\n2. Em “Terminar em (segundos, opcional)”, apague o valor e deixe vazio.\n3. Confira a quantidade e a duração dos clipes e clique em “Gerar clipes” novamente.\nVocê também pode clicar em “Usar intervalo completo permitido” abaixo.');
+    error.resetRange=true;throw error;
+  }
   const length=Number(mode==='single'?duration:clipDuration);
-  if(!Number.isFinite(length)||length<=0)throw Error('Escolha uma duração maior que zero.');
+  if(!Number.isFinite(length)||length<=0)throw Error('A duração está vazia ou inválida. No modo automático, escolha 30, 45 ou 60 segundos em “Duração de cada clipe automático”. No modo manual, escolha em “Duração fixa do corte”, abaixo da prévia.');
   if(mode==='single'&&selections?.length) {
     if(selections.length>10)throw Error('Selecione no máximo 10 trechos por vez.');
-    return selections.map(item=>{
+    return selections.map((item,index)=>{
       const offset=Number(item.start);
-      if(!Number.isFinite(offset)||offset<first||offset+length>last+1e-6)throw Error('Um dos trechos não cabe no intervalo permitido. Ajuste a seleção.');
+      if(!Number.isFinite(offset)||offset<first||offset+length>last+1e-6)throw Error('O trecho '+(index+1)+' começa em '+String(item.start)+'s e precisa de '+length+'s, mas ele deve ficar entre '+first.toFixed(1)+'s e '+last.toFixed(1)+'s.\nComo corrigir: '+(last-first>=length?'na seleção abaixo da prévia, arraste o início para um ponto entre '+first.toFixed(1)+'s e '+(last-length).toFixed(1)+'s.':'escolha uma duração menor; este intervalo tem somente '+(last-first).toFixed(1)+'s úteis.')+' Se o trecho já estiver na lista, clique em “Remover” nele e adicione a seleção corrigida.');
       return {start:offset,length};
     });
   }
   const limit=mode==='single'?1:Number(count);
   if(!Number.isInteger(limit)||limit<1||limit>10)throw Error('Escolha de 1 a 10 clipes.');
-  if(limit*length>last-first+1e-6)throw Error('O intervalo útil tem '+(last-first).toFixed(1)+'s e comporta '+Math.floor((last-first)/length)+' clipe(s) de '+length+'s. Reduza a quantidade ou a duração. A duração escolhida será preservada.');
+  if(limit*length>last-first+1e-6){
+    const available=last-first,capacity=Math.floor(available/length);
+    const alternatives=[30,45,60].filter(seconds=>limit*seconds<=available+1e-6);
+    throw Error('Você pediu '+limit+' clipe(s) de '+length+'s: são necessários '+(limit*length)+'s.\nO intervalo escolhido vai de '+first.toFixed(1)+'s até '+last.toFixed(1)+'s, tem '+available.toFixed(1)+'s úteis e comporta '+capacity+' clipe(s) de '+length+'s.\nComo corrigir:\n'+(capacity>0?'• Em “Quantidade de clipes”, escolha '+capacity+' ou menos, mantendo '+length+' segundos.':'• Este intervalo não comporta nem 1 clipe de '+length+'s. Escolha uma duração menor ou um vídeo mais longo.')+'\n'+(alternatives.length?'• Para manter '+limit+' clipe(s), em “Duração de cada clipe automático”, escolha '+alternatives.join(' ou ')+' segundos.':'• Para manter essa quantidade e duração, selecione um vídeo maior ou amplie o intervalo usando “Começar em” = 10 e “Terminar em” vazio.')+'\nA duração dos cortes não será encurtada automaticamente.');
+  }
   return Array.from({length:limit},(_,i)=>({start:first+i*length,length}));
 }
 function waitFor(target,event,signal,timeout=30000) {
@@ -28,7 +36,7 @@ function waitFor(target,event,signal,timeout=30000) {
     const finish=(error)=>{clearTimeout(timer);target.removeEventListener(event,ok);target.removeEventListener('error',bad);signal?.removeEventListener('abort',abort);error?reject(error):resolve();};
     const ok=()=>finish(),bad=()=>finish(Error('O navegador não conseguiu decodificar este vídeo. Tente MP4 com vídeo H.264 e áudio AAC.'));
     const abort=()=>finish(new DOMException('Corte cancelado.','AbortError'));
-    const timer=setTimeout(()=>finish(Error('O vídeo demorou demais para responder.')),timeout);
+    const timer=setTimeout(()=>finish(Error('A prévia do vídeo não respondeu em 30 segundos. Aguarde o arquivo carregar, feche outros programas pesados e selecione o vídeo novamente em “Enviar vídeo”.')),timeout);
     target.addEventListener(event,ok,{once:true});target.addEventListener('error',bad,{once:true});signal?.addEventListener('abort',abort,{once:true});
     if(signal?.aborted) abort();
   });
@@ -70,7 +78,7 @@ async function recordSegment(video,canvas,stream,segment,format,status,index,tot
       if(Date.now()-lastProgress>500){status('Clipe '+(index+1)+' de '+total+' · '+Math.min(100,Math.floor(elapsed/segment.length*100))+'% · mantenha esta aba visível');lastProgress=Date.now();}
       if(video.currentTime>=segment.start+segment.length-.025||video.ended)stop();
     },25);
-    watchdog=setTimeout(()=>fail(Error('A reprodução travou. Mantenha a aba visível e tente novamente.')),(segment.length*2+30)*1000);
+    watchdog=setTimeout(()=>fail(Error('A reprodução travou. Deixe esta aba do ViralClip aberta e visível, evite suspender o computador e clique em “Gerar clipes” novamente. Para testar, escolha 1 clipe de 30 segundos.')),(segment.length*2+30)*1000);
     try{recorder.start(1000);draw();video.play().catch(fail);}catch(e){fail(e);}
   });
 }
@@ -130,7 +138,7 @@ export async function cutLocally(file,options,status=()=>{},signal=new AbortCont
     const archive=zipSync(entries,{level:0});
     return {blob:new Blob([archive],{type:'application/zip'}),files,zip:true,extension:format.extension,notice:'Os primeiros e últimos 10 segundos foram excluídos. Duração escolhida preservada.'};
   } catch(error) {
-    if(controller.signal.aborted)throw new DOMException(document.hidden?'Corte interrompido: mantenha a aba visível durante a exportação.':'Corte cancelado.','AbortError');
+    if(controller.signal.aborted)throw new DOMException(document.hidden?'O corte parou porque a aba ficou oculta. Volte para a aba do ViralClip, clique em “Gerar clipes” novamente e mantenha-a visível até terminar.':'Corte cancelado.','AbortError');
     throw error;
   } finally {
     video.pause();video.removeAttribute('src');video.load();video.remove();
@@ -140,5 +148,6 @@ export async function cutLocally(file,options,status=()=>{},signal=new AbortCont
     URL.revokeObjectURL(url);signal.removeEventListener('abort',abort);document.removeEventListener('visibilitychange',visibility);busy=false;
   }
 }
+
 
 

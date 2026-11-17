@@ -24,3 +24,11 @@ test('moving watermark stays inside frame in portrait, square and landscape',()=
     assert.notDeepEqual(watermarkPosition(w,h,tw,size,0),watermarkPosition(w,h,tw,size,5));
   }
 });
+
+
+test('invalid interval identifies entered values and exact repair steps',()=>{
+  assert.throws(()=>planSegments(167.7,{mode:'batch',count:3,clipDuration:45,start:160,end:0}),error=>error.resetRange===true&&error.message.includes('“Começar em” = 160')&&error.message.includes('“Terminar em” = 0')&&error.message.includes('digite 10')&&error.message.includes('deixe vazio')&&error.message.includes('157.7'));
+});
+test('insufficient footage gives achievable count and duration choices',()=>{
+  assert.throws(()=>planSegments(167.7,{mode:'batch',count:3,clipDuration:60}),error=>error.message.includes('necessários 180s')&&error.message.includes('escolha 2 ou menos')&&error.message.includes('escolha 30 ou 45 segundos'));
+});
