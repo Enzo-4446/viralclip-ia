@@ -52,9 +52,9 @@ const fd=new FormData();if(sourceMode==='youtube'){fd.append('url',$('youtubeUrl
        const check=await fetch(api+'/jobs/'+jobId,{headers:{Authorization:'Bearer '+session.access_token},signal:controller.signal});
        if(!check.ok)throw Error('Não foi possível consultar o processamento (HTTP '+check.status+').');
        const job=await check.json();
-       $('status').textContent=job.message||'Processando vídeo...';
-       if(job.state==='failed')throw Error(job.message||'Falha no processamento');
-       if(job.state==='done'){
+       $('status').textContent=job.stage||job.message||'Processando vídeo...';
+       if(job.state==='failed')throw Error(job.error||job.message||'Falha no processamento');
+       if(job.state==='finished'||job.state==='done'){
          r=await fetch(api+'/jobs/'+jobId+'/download',{headers:{Authorization:'Bearer '+session.access_token},signal:controller.signal});
          break;
        }
