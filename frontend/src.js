@@ -28,3 +28,15 @@ $('generate').onclick=async()=>{if(sourceMode==='youtube'){$('status').textConte
 sb.auth.onAuthStateChange((event)=>{if(event==='PASSWORD_RECOVERY'){recoveryMode=true;$('auth').hidden=false;$('app').hidden=true;$('resetBox').hidden=false;$('authStatus').textContent='Informe uma nova senha para concluir a recuperação.';return}if(!recoveryMode)setTimeout(refresh,0)});refresh();
 
 $('mode').onchange=()=>{$('generate').textContent=$('mode').value==='batch'?'Gerar até 10 cortes':'Gerar MP4';$('start').disabled=$('mode').value==='batch';$('duration').disabled=$('mode').value==='batch';$('download').hidden=true};$('mode').onchange();
+
+
+// Professional editor: safe local recording and explicit render capability notices.
+let voiceRecorder=null,voiceChunks=[],voiceUrl=null,voiceStream=null;
+const voicePreview=$('voicePreview');
+const setVoicePreview=blob=>{if(voiceUrl)URL.revokeObjectURL(voiceUrl);voiceUrl=URL.createObjectURL(blob);voicePreview.src=voiceUrl;voicePreview.hidden=false;};
+$('recordVoice').onclick=async()=>{try{if(!navigator.mediaDevices?.getUserMedia||!window.MediaRecorder)throw Error('Este navegador não permite gravar áudio.');voiceStream=await navigator.mediaDevices.getUserMedia({audio:true});voiceChunks=[];voiceRecorder=new MediaRecorder(voiceStream);voiceRecorder.ondataavailable=e=>{if(e.data.size)voiceChunks.push(e.data)};voiceRecorder.onstop=()=>{setVoicePreview(new Blob(voiceChunks,{type:voiceRecorder.mimeType||'audio/webm'}));$('voiceStatus').textContent='Narração gravada. Ouça a prévia antes de continuar.';voiceStream?.getTracks().forEach(t=>t.stop());$('recordVoice').disabled=false;$('stopVoice').disabled=true};voiceRecorder.start();$('recordVoice').disabled=true;$('stopVoice').disabled=false;$('voiceStatus').textContent='Gravando sua voz…';}catch(e){$('voiceStatus').textContent='Microfone indisponível: '+e.message;}};
+$('stopVoice').onclick=()=>{if(voiceRecorder?.state==='recording')voiceRecorder.stop()};
+$('voiceFile').onchange=()=>{const f=$('voiceFile').files[0];if(!f)return;setVoicePreview(f);$('voiceStatus').textContent='Narração importada: '+f.name};
+const editorFields=['quality','fps','crf','framing','captions','captionLanguage','captionStyle','ducking','originalVolume','duckDb','releaseMs'];
+const updateEditor=()=>{const captions=$('captions').checked;$('captionLanguage').disabled=!captions;$('captionStyle').disabled=!captions;$('duckDb').disabled=!$('ducking').checked;$('releaseMs').disabled=!$('ducking').checked;$('settingsSummary').textContent='Configuração desejada: '+$('quality').value+'p · '+$('fps').value+' FPS · '+(captions?'legendas '+$('captionLanguage').value:'sem legendas')+' · '+($('ducking').checked?'ducking ligado':'ducking desligado')+'. Exportação avançada ainda não conectada.'};
+editorFields.forEach(id=>$(id).addEventListener('change',updateEditor));updateEditor();
