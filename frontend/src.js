@@ -25,7 +25,38 @@ $('tabYoutube').onclick=()=>setSourceMode('youtube');$('tabUpload').onclick=()=>
 const youtubeId=url=>{try{const u=new URL(url);const h=u.hostname.toLowerCase();if(h==='youtu.be'||h==='www.youtu.be')return u.pathname.split('/')[1]?.match(/^[a-zA-Z0-9_-]{11}$/)?.[0]||null;if(['youtube.com','www.youtube.com','m.youtube.com','music.youtube.com'].includes(h)){const id=u.pathname==='/watch'?u.searchParams.get('v'):u.pathname.match(/^\/(?:shorts|live|embed)\/([a-zA-Z0-9_-]{11})/)?.[1];return id&&/^[a-zA-Z0-9_-]{11}$/.test(id)?id:null}}catch{}return null};
 $('inspectYoutube').onclick=()=>{const id=youtubeId($('youtubeUrl').value.trim());if(!id){$('youtubeInfo').textContent='Link inválido. Cole uma URL de vídeo, Shorts ou live do YouTube.';return}if(localPreviewUrl){URL.revokeObjectURL(localPreviewUrl);localPreviewUrl=null}const iframe=document.createElement('iframe');iframe.src='https://www.youtube-nocookie.com/embed/'+encodeURIComponent(id);iframe.title='Prévia do YouTube';iframe.allow='accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture';iframe.allowFullscreen=true;iframe.style.cssText='width:100%;height:100%;border:0';$('videoPreview').replaceChildren(iframe);$('youtubeInfo').textContent='Vídeo identificado: '+id+'. Prévia disponível quando o YouTube permitir incorporação. Para gerar, confirme os direitos de edição e escolha suas configurações. A disponibilidade depende das restrições do YouTube.'};
 $('file').onchange=()=>{importedYoutubeFile=null;const file=$('file').files[0];if(localPreviewUrl)URL.revokeObjectURL(localPreviewUrl);if(!file)return;localPreviewUrl=URL.createObjectURL(file);const video=document.createElement('video');video.src=localPreviewUrl;video.controls=true;video.playsInline=true;$('videoPreview').replaceChildren(video);$('status').textContent='Arquivo selecionado: '+file.name};
-$('generate').onclick=async()=>{const f=$('file').files[0]||importedYoutubeFile;if(sourceMode==='upload'&&!f){$('status').textContent='Selecione um vídeo.';return}if(sourceMode==='youtube'&&!youtubeId($('youtubeUrl').value.trim())){$('status').textContent='Cole um link válido do YouTube.';return}if(sourceMode==='youtube'&&!$('rights').checked){$('status').textContent='Confirme que você tem autorização para editar o vídeo.';return}const {data:{session}}=await sb.auth.getSession();if(!session){$('status').textContent='Faça login novamente.';return}const brand=$('brand').value.trim(),title=$('title').value.trim();if(!api){$('status').textContent='Servidor FFmpeg indisponível.';return}if(!title||($('watermark').checked&&!brand)){$('status').textContent='Informe título e, se ativada, a marca.';return}if($('captions').checked){try{const capsResponse=await fetch(api+'/capabilities',{headers:{Authorization:'Bearer '+session.access_token}});if(capsResponse.ok){const caps=await capsResponse.json();if(!caps.captions){$('status').textContent='O servidor não possui transcrição configurada. Desative Legendas automáticas para gerar o vídeo.';return}}}catch(e){console.warn('Capacidades indisponíveis',e)}}if(sourceMode==='youtube'){
+const localEngine=()=>$('processingEngine').value==='local';
+$('processingEngine').onchange=()=>{
+  const local=localEngine();
+  $('localNote').textContent=local?'O MP4 fica no seu dispositivo. Sem API, sem envio ao Render. Mantém resolução e proporção originais; não adiciona legendas, marca ou efeitos.':'Edição avançada usa o Render e permite enquadramento vertical, marca e legendas quando configuradas.';
+  updateGenerateState();
+};
+async function generateLocal(f,title,session){
+  const status=message=>$('status').textContent=message;
+  $('generate').disabled=true;
+  try{
+    const {cutLocally}=await import('./local-cutter.js');
+    const result=await cutLocally(f,{mode:$('mode').value,count:Number($('count').value),clipDuration:Number($('clipDuration').value),start:Number($('start').value),duration:Number($('duration').value)},status);
+    clearResults();
+    for(const item of result.files){
+      const blob=new Blob([item.bytes],{type:'video/mp4'});
+      const url=URL.createObjectURL(blob);resultUrls.push(url);
+      const card=document.createElement('div'),video=document.createElement('video'),p=document.createElement('p'),link=document.createElement('a');
+      video.src=url;video.controls=true;video.playsInline=true;video.preload='metadata';
+      p.textContent=item.name;link.href=url;link.download=item.name;link.textContent='Baixar MP4';
+      card.className='result-card';card.append(video,p,link);$('results').append(card);
+    }
+    const url=URL.createObjectURL(result.blob);resultUrls.push(url);
+    $('download').href=url;$('download').download=result.zip?'viralclip_cortes.zip':'viralclip.mp4';
+    $('download').textContent=result.zip?'Baixar todos em ZIP':'Baixar MP4';$('download').hidden=false;
+    status(result.files.length+' clipe(s) gerado(s) localmente, sem enviar o vídeo ao servidor.');
+    const {error}=await sb.from('clip_projects').insert({user_id:session.user.id,title,watermark_text:'',rights_confirmed:true,source_kind:'upload'});
+    if(error)console.warn('Histórico:',error.message);
+    await loadProjects();
+  }catch(e){status('Corte local não concluído: '+e.message+'. Para vídeos grandes ou dispositivos com pouca memória, use a edição avançada.');console.error(e)}
+  finally{updateGenerateState()}
+}
+$('generate').onclick=async()=>{const f=$('file').files[0]||importedYoutubeFile;if(sourceMode==='upload'&&!f){$('status').textContent='Selecione um vídeo.';return}if(sourceMode==='youtube'&&!youtubeId($('youtubeUrl').value.trim())){$('status').textContent='Cole um link válido do YouTube.';return}if(sourceMode==='youtube'&&!$('rights').checked){$('status').textContent='Confirme que você tem autorização para editar o vídeo.';return}const {data:{session}}=await sb.auth.getSession();if(!session){$('status').textContent='Faça login novamente.';return}const brand=$('brand').value.trim(),title=$('title').value.trim();if(!api){$('status').textContent='Servidor FFmpeg indisponível.';return}if(sourceMode==='upload'&&localEngine()){if(!title){$('status').textContent='Informe o título do projeto.';return}await generateLocal(f,title,session);return}if(!title||($('watermark').checked&&!brand)){$('status').textContent='Informe título e, se ativada, a marca.';return}if($('captions').checked){try{const capsResponse=await fetch(api+'/capabilities',{headers:{Authorization:'Bearer '+session.access_token}});if(capsResponse.ok){const caps=await capsResponse.json();if(!caps.captions){$('status').textContent='O servidor não possui transcrição configurada. Desative Legendas automáticas para gerar o vídeo.';return}}}catch(e){console.warn('Capacidades indisponíveis',e)}}if(sourceMode==='youtube'){
   $('generate').disabled=true;
   $('status').textContent='Verificando se o servidor consegue acessar o vídeo antes de criar o projeto...';
   try{
