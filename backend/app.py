@@ -41,7 +41,7 @@ MAX_BYTES = 500 * 1024 * 1024
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "ffmpeg": subprocess.run(["ffmpeg","-version"],capture_output=True,timeout=5).returncode == 0}
+    return {"status": "ok", "ffmpeg": subprocess.run(["ffmpeg","-version"],capture_output=True,timeout=5).returncode == 0, "node": subprocess.run(["node","--version"],capture_output=True,text=True,timeout=5).stdout.strip(), "yt_dlp": subprocess.run(["yt-dlp","--version"],capture_output=True,text=True,timeout=5).stdout.strip()}
 
 @app.post("/clips")
 async def clips(file: UploadFile = File(...), brand: str = Form("VIRALCLIP"), start: float = Form(0), duration: int = Form(45), project_id: str = Form(...), settings: str = Form("{}"), voice: UploadFile | None = File(None), user: dict = Depends(require_user)):
@@ -226,7 +226,7 @@ async def youtube_clips(url: str = Form(...), project_id: str = Form(...), brand
     source_template=str(ROOT/(job+".source.%(ext)s"))
     try:
         # Restricted, single-item, bounded transfer. yt-dlp may fail when YouTube restricts access.
-        cmd=["yt-dlp","--no-playlist","--no-progress","--no-warnings","--max-filesize","500M","--match-filter","!is_live & !was_live","--socket-timeout","20","--retries","2","--fragment-retries","2","--format","bestvideo[height<=720]+bestaudio/best[height<=720]/best","--merge-output-format","mp4","--output",source_template,canonical]
+        cmd=["yt-dlp","--js-runtimes","node","--no-playlist","--no-progress","--no-warnings","--max-filesize","500M","--match-filter","!is_live & !was_live","--socket-timeout","20","--retries","2","--fragment-retries","2","--format","bestvideo[height<=720]+bestaudio/best[height<=720]/best","--merge-output-format","mp4","--output",source_template,canonical]
         try:
             p=await __import__("starlette.concurrency",fromlist=["run_in_threadpool"]).run_in_threadpool(lambda: subprocess.run(cmd,capture_output=True,text=True,timeout=240))
         except subprocess.TimeoutExpired: raise HTTPException(504,"O YouTube demorou demais para responder")
