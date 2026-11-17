@@ -39,6 +39,10 @@ ROOT = Path(os.getenv("MEDIA_DIR", "./media"))
 ROOT.mkdir(parents=True, exist_ok=True)
 MAX_BYTES = 500 * 1024 * 1024
 
+@app.get("/capabilities")
+def capabilities(user: dict = Depends(require_user)):
+    return {"captions":bool(os.getenv("OPENAI_API_KEY")),"ffmpeg":True}
+
 @app.get("/health")
 def health():
     return {"status": "ok", "ffmpeg": subprocess.run(["ffmpeg","-version"],capture_output=True,timeout=5).returncode == 0, "node": subprocess.run(["node","--version"],capture_output=True,text=True,timeout=5).stdout.strip(), "yt_dlp": subprocess.run(["yt-dlp","--version"],capture_output=True,text=True,timeout=5).stdout.strip()}
