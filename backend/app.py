@@ -319,3 +319,39 @@ async def youtube_download(url: str = Form(...), rights_confirmed: bool = Form(F
     except Exception:
         cleanup()
         raise
+
+
+@app.post("/media/import")
+async def import_media(url: str = Form(...), user: dict = Depends(require_user)):
+    """Import authorized direct MP4 links from explicitly approved storage hosts."""
+    import httpx
+    from urllib.parse import urlsplit
+    parsed=urlsplit(url)
+    hostname=(parsed.hostname or "").lower()
+    allowed={host.strip().lower() for host in os.getenv("MEDIA_SOURCE_HOSTS","").split(",") if host.strip()}
+    if parsed.scheme!="https" or parsed.username or parsed.password or parsed.port not in (None,443) or hostname not in allowed or not allowed:
+        raise HTTPException(400,"Origem não autorizada. Configure MEDIA_SOURCE_HOSTS com o domínio de armazenamento confiável.")
+    job=uuid.uuid4().hex
+    target=ROOT/(job+".mp4")
+    try:
+        async with httpx.AsyncClient(follow_redirects=False,timeout=httpx.Timeout(30.0,read=45.0)) as client:
+            async with client.stream("GET",url) as response:
+                if response.status_code!=200:
+                    raise HTTPException(422,"O link não disponibilizou o arquivo diretamente (HTTP "+str(response.status_code)+").")
+                content_type=response.headers.get("content-type","").split(";")[0].strip().lower()
+                if content_type not in ("video/mp4","application/octet-stream"):
+                    raise HTTPException(415,"O link não retornou um MP4 direto.")
+                total=0
+                with target.open("wb") as output:
+                    async for chunk in response.aiter_bytes(1024*1024):
+                        total+=len(chunk)
+                        if total>MAX_BYTES: raise HTTPException(413,"Vídeo acima de 500 MB")
+                        output.write(chunk)
+        if total<1024: raise HTTPException(422,"Arquivo vazio ou inválido.")
+        probe=subprocess.run(["ffprobe","-v","error","-select_streams","v:0","-show_entries","stream=codec_type","-of","default=noprint_wrappers=1",str(target)],capture_output=True,text=True,timeout=20)
+        if probe.returncode or "codec_type=video" not in probe.stdout:
+            raise HTTPException(422,"O arquivo não contém um vídeo válido.")
+        return FileResponse(target,media_type="video/mp4",filename="viralclip_importado.mp4",background=BackgroundTask(target.unlink,missing_ok=True))
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
