@@ -1,5 +1,6 @@
 import {FFmpeg} from '@ffmpeg/ffmpeg';
-import {toBlobURL} from '@ffmpeg/util';
+import coreURL from '@ffmpeg/core/dist/umd/ffmpeg-core.js?url';
+import wasmURL from '@ffmpeg/core/dist/umd/ffmpeg-core.wasm?url';
 import {zipSync} from 'fflate';
 
 let engine;
@@ -8,11 +9,12 @@ async function getEngine(status) {
   const ffmpeg = new FFmpeg();
   ffmpeg.on('log', ({message}) => { if (/error|failed/i.test(message)) console.warn('[ffmpeg local]',message); });
   status('Carregando motor de corte no navegador (primeira execução)...');
-  const base='https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd';
-  await ffmpeg.load({
-    coreURL:await toBlobURL(base+'/ffmpeg-core.js','text/javascript'),
-    wasmURL:await toBlobURL(base+'/ffmpeg-core.wasm','application/wasm')
-  });
+  try {
+    await ffmpeg.load({coreURL:new URL(coreURL,location.href).href,wasmURL:new URL(wasmURL,location.href).href});
+  } catch (error) {
+    console.error('FFmpeg local initialization failed',error);
+    throw new Error('Não foi possível iniciar o motor local: '+(error?.message||String(error)||'falha desconhecida'));
+  }
   engine=ffmpeg;
   return ffmpeg;
 }
