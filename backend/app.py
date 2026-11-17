@@ -277,3 +277,45 @@ async def check_youtube(url: str = Form(...), user: dict = Depends(require_user)
     if info.get("is_live") or info.get("live_status")=="is_live":
         return {"status":"blocked","message":"Lives em andamento não são suportadas. Use a gravação após o encerramento."}
     return {"status":"available","title":str(info.get("title") or "")[:160],"duration":info.get("duration"),"message":"Metadados acessíveis ao servidor. Você pode clicar em Gerar clipes; a transferência completa ainda pode ser bloqueada."}
+
+
+@app.post("/youtube/download")
+async def youtube_download(url: str = Form(...), rights_confirmed: bool = Form(False), user: dict = Depends(require_user)):
+    """Download an accessible authorized YouTube video as MP4 for local editing."""
+    if not rights_confirmed:
+        raise HTTPException(400,"Confirme que possui autorização para editar o vídeo")
+    parsed=urlparse(url)
+    host=(parsed.hostname or "").lower()
+    if parsed.scheme!="https" or parsed.port not in (None,443) or parsed.username or parsed.password or host not in ("youtube.com","www.youtube.com","m.youtube.com","youtu.be","www.youtu.be"):
+        raise HTTPException(400,"URL HTTPS do YouTube inválida")
+    video_id=(parse_qs(parsed.query).get("v",[None])[0] if parsed.path=="/watch" else parsed.path.strip("/").split("/")[-1])
+    if not video_id or not re.fullmatch(r"[A-Za-z0-9_-]{11}",video_id):
+        raise HTTPException(400,"ID do vídeo inválido")
+    job=uuid.uuid4().hex
+    prefix=job+".download."
+    template=str(ROOT/(prefix+"%(ext)s"))
+    canonical="https://www.youtube.com/watch?v="+video_id
+    cmd=["yt-dlp","--js-runtimes","node","--no-playlist","--no-progress","--no-warnings","--max-filesize","500M","--match-filter","!is_live & !was_live","--socket-timeout","20","--retries","2","--fragment-retries","2","-f","bv*[height<=720]+ba/b[height<=720]/b","--merge-output-format","mp4","--recode-video","mp4","-o",template,canonical]
+    def cleanup():
+        for item in ROOT.glob(prefix+"*"):
+            if item.is_file(): item.unlink(missing_ok=True)
+    try:
+        try:
+            proc=await __import__("starlette.concurrency",fromlist=["run_in_threadpool"]).run_in_threadpool(lambda:subprocess.run(cmd,capture_output=True,text=True,timeout=240))
+        except subprocess.TimeoutExpired:
+            raise HTTPException(504,"Tempo de transferência excedido")
+        if proc.returncode:
+            error=(proc.stderr or "").lower()
+            if any(k in error for k in ("sign in","bot","cookies","confirm you")):
+                raise HTTPException(422,"O YouTube exige autenticação do servidor. A prévia incorporada não permite baixar o arquivo.")
+            raise HTTPException(422,"O YouTube não disponibilizou o vídeo para transferência neste servidor.")
+        files=[p for p in ROOT.glob(prefix+"*") if p.is_file() and p.suffix==".mp4"]
+        if not files:
+            raise HTTPException(422,"Não foi possível produzir um arquivo MP4")
+        source=files[0]
+        if source.stat().st_size>MAX_BYTES:
+            raise HTTPException(413,"Vídeo excede 500 MB")
+        return FileResponse(source,media_type="video/mp4",filename="viralclip_fonte_"+video_id+".mp4",background=BackgroundTask(cleanup))
+    except Exception:
+        cleanup()
+        raise
