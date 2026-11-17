@@ -134,3 +134,45 @@ def youtube_metadata(url: str):
         return {"title": data.get("title"), "author_name": data.get("author_name"), "url": canonical, "download_available": False}
     except Exception:
         raise HTTPException(404, "Metadados indisponíveis; confira se o vídeo é público")
+
+# Batch mode: authenticated upload, ownership check and ten scene-aware exports.
+@app.post("/clips/batch")
+async def batch_clips(file: UploadFile = File(...), brand: str = Form("VIRALCLIP"), project_id: str = Form(...), user: dict = Depends(require_user)):
+    from batch import render_batch
+    try:
+        uuid.UUID(project_id)
+    except ValueError:
+        raise HTTPException(400, "ID de projeto inválido")
+    if not re.fullmatch(r"[\\w @.-]{1,32}", brand, re.UNICODE):
+        raise HTTPException(400, "Marca inválida")
+    if file.content_type not in ("video/mp4","video/quicktime","video/x-matroska","video/webm"):
+        raise HTTPException(415, "Formato de vídeo não suportado")
+    base=os.environ["SUPABASE_URL"].rstrip("/")
+    key=os.environ["SUPABASE_PUBLISHABLE_KEY"]
+    endpoint=base+"/rest/v1/clip_projects?id=eq."+project_id+"&user_id=eq."+user["id"]+"&select=id&limit=1"
+    try:
+        req=Request(endpoint,headers={"apikey":key,"Authorization":"Bearer "+user["access_token"]})
+        with urlopen(req,timeout=8) as response:
+            records=json.loads(response.read(4096))
+        if not records: raise HTTPException(403,"Projeto não pertence ao usuário")
+    except HTTPError:
+        raise HTTPException(503,"Não foi possível verificar o projeto")
+    job=uuid.uuid4().hex
+    src=ROOT/(job+".input")
+    output=ROOT/(job+".zip")
+    try:
+        size=0
+        with src.open("wb") as dest:
+            while chunk:=await file.read(1024*1024):
+                size+=len(chunk)
+                if size>MAX_BYTES: raise HTTPException(413,"Arquivo acima de 500 MB")
+                dest.write(chunk)
+        try:
+            await __import__("starlette.concurrency",fromlist=["run_in_threadpool"]).run_in_threadpool(render_batch,src,output,brand)
+        except ValueError as exc:
+            raise HTTPException(422,str(exc))
+        except (RuntimeError,subprocess.TimeoutExpired) as exc:
+            raise HTTPException(500,"Erro ao produzir os cortes: "+str(exc)[:300])
+        return FileResponse(output,media_type="application/zip",filename="viralclip_10_cortes.zip",background=BackgroundTask(output.unlink,missing_ok=True))
+    finally:
+        src.unlink(missing_ok=True)
