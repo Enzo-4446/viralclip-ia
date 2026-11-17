@@ -143,7 +143,7 @@ async def batch_clips(file: UploadFile = File(...), brand: str = Form("VIRALCLIP
         uuid.UUID(project_id)
     except ValueError:
         raise HTTPException(400, "ID de projeto inválido")
-    if not re.fullmatch(r"[\\w @.-]{1,32}", brand, re.UNICODE):
+    if not re.fullmatch(r"[\w @.-]{1,32}", brand, re.UNICODE):
         raise HTTPException(400, "Marca inválida")
     if file.content_type not in ("video/mp4","video/quicktime","video/x-matroska","video/webm"):
         raise HTTPException(415, "Formato de vídeo não suportado")
@@ -226,12 +226,12 @@ async def youtube_clips(url: str = Form(...), project_id: str = Form(...), brand
     source_template=str(ROOT/(job+".source.%(ext)s"))
     try:
         # Restricted, single-item, bounded transfer. yt-dlp may fail when YouTube restricts access.
-        cmd=["yt-dlp","--no-playlist","--no-progress","--no-warnings","--max-filesize","500M","--match-filter","!is_live & !was_live","--socket-timeout","20","--retries","2","--format","best[ext=mp4][height<=720]/best[height<=720]/best","--merge-output-format","mp4","--output",source_template,canonical]
+        cmd=["yt-dlp","--no-playlist","--no-progress","--no-warnings","--max-filesize","500M","--match-filter","!is_live & !was_live","--socket-timeout","20","--retries","2","--fragment-retries","2","--format","bestvideo[height<=720]+bestaudio/best[height<=720]/best","--merge-output-format","mp4","--output",source_template,canonical]
         try:
             p=await __import__("starlette.concurrency",fromlist=["run_in_threadpool"]).run_in_threadpool(lambda: subprocess.run(cmd,capture_output=True,text=True,timeout=240))
         except subprocess.TimeoutExpired: raise HTTPException(504,"O YouTube demorou demais para responder")
         if p.returncode:
-            raise HTTPException(422,("YouTube bloqueou o acesso automatizado do servidor." if any(x in (p.stderr or "").lower() for x in ("sign in","bot","cookies","confirm you")) else "Falha na transferência pelo servidor (yt-dlp).")+" Envie um arquivo de vídeo autorizado ou tente outro vídeo.")
+            raise HTTPException(422,("YouTube exigiu autenticação/verificação humana." if any(x in (p.stderr or "").lower() for x in ("sign in","bot","cookies","confirm you")) else "YouTube recusou o acesso (403/429)." if any(x in (p.stderr or "").lower() for x in ("403","429","forbidden")) else "Falha na transferência do YouTube.")+" Tente outro link ou envie um arquivo autorizado.")
         candidates=[p for p in ROOT.glob(job+".source.*") if p.is_file() and not p.name.endswith((".part",".ytdl"))]
         if not candidates: raise HTTPException(422,"Arquivo de vídeo não encontrado após transferência")
         src=candidates[0]
