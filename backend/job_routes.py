@@ -6,7 +6,11 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, H
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
-def require_job_user(authorization: str = Header(default="")):\n    from app import require_user\n    return require_user(authorization)\n\nrouter=APIRouter()
+def require_job_user(authorization: str = Header(default="")):
+    from app import require_user
+    return require_user(authorization)
+
+router=APIRouter()
 POOL=ThreadPoolExecutor(max_workers=1)
 LOCK=threading.Lock()
 JOBS={}
