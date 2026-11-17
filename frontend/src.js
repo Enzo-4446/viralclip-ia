@@ -1,3 +1,4 @@
+import {rememberWatermark} from './watermark-preference.js';
 import {createClipVault} from './clip-vault.js';
 import '@fontsource-variable/manrope';
 import {mountTimeline} from './timeline.js';
@@ -9,10 +10,11 @@ const sb=createClient(env.VITE_SUPABASE_URL||'https://zltpldhnaqiqkoqdiugp.supab
 const api=(env.VITE_API_URL||'https://viralclip-ia.onrender.com').replace(/\/$/,'');
 const authRedirectUrl='https://enzo-4446.github.io/viralclip-ia/';
 const $=id=>document.getElementById(id);
+let watermarkPreference=null;
 const vault=createClipVault({sb,url:env.VITE_SUPABASE_URL||'https://zltpldhnaqiqkoqdiugp.supabase.co',root:$('savedClips'),message:$('savedClipsStatus'),refreshButton:$('refreshSavedClips'),pendingRoot:$('pendingClips')});
 window.addEventListener('error',e=>{const s=$('authStatus');if(s)s.textContent='Erro de inicialização: '+e.message});
 window.addEventListener('unhandledrejection',e=>{const s=$('authStatus');if(s)s.textContent='Falha de conexão: '+(e.reason?.message||String(e.reason))});
-async function refresh(){const {data:{session}}=await sb.auth.getSession();$('auth').hidden=!!session;$('app').hidden=!session;if(session){await loadProjects();await vault.load();}else{vault.clear();clearResults();}}
+async function refresh(){const {data:{session}}=await sb.auth.getSession();$('auth').hidden=!!session;$('app').hidden=!session;if(session){await watermarkPreference?.restore(session);await loadProjects();await vault.load();}else{await watermarkPreference?.restore(null);vault.clear();clearResults();}}
 async function loadProjects(){const {data,error}=await sb.from('clip_projects').select('title,created_at').order('created_at',{ascending:false}).limit(20);$('projects').textContent=error?error.message:(data?.map(x=>x.title+' — '+new Date(x.created_at).toLocaleDateString('pt-BR')).join('\n')||'Nenhum projeto ainda.');$('projects').style.whiteSpace='pre-line';}
 const bindVisibility=(buttonId,inputId)=>{$(buttonId).onclick=()=>{const input=$(inputId),show=input.type==='password';input.type=show?'text':'password';$(buttonId).textContent=show?'Ocultar':'Ver';$(buttonId).setAttribute('aria-label',show?'Ocultar senha':'Mostrar senha');$(buttonId).setAttribute('aria-pressed',String(show))}};
 bindVisibility('togglePassword','password');
@@ -133,7 +135,7 @@ $('watermark').addEventListener('change',()=>{$('brand').disabled=!$('watermark'
 $('count').addEventListener('change',updateEditor);$('clipDuration').addEventListener('change',updateEditor);$('aspect').addEventListener('change',updateEditor);
 const oldModeChange=$('mode').onchange;$('mode').onchange=()=>{oldModeChange();$('count').disabled=$('mode').value==='single';$('clipDuration').disabled=$('mode').value==='single';clearResults()};$('mode').onchange();
 
-const updateGenerateState=()=>{$('signout').disabled=localBusy;for(const id of ['file','processingEngine','tabYoutube','tabUpload','mode','count','clipDuration','start','end','duration','watermark','brand'])$(id).disabled=localBusy;$('brand').disabled=localBusy||!$('watermark').checked;const yt=sourceMode==='youtube';$('manualFields').hidden=yt||$('mode').value!=='single';$('rangeFields').hidden=yt||(!localEngine()&&$('mode').value==='batch');$('endField').hidden=!localEngine();const ready=yt?Boolean(youtubeId($('youtubeUrl').value.trim())&&$('rights').checked):Boolean($('file').files[0]||importedYoutubeFile);$('generate').disabled=localBusy||!ready;$('generate').title=ready?'Gerar vídeos com as configurações escolhidas':yt?'Informe um link e confirme os direitos de edição':'Selecione um vídeo';$('generate').textContent=yt?'Gerar clipes':$('mode').value==='batch'?'Gerar clipes':'Cortar seleção manual';$('mode').disabled=localBusy||yt;$('recordVoice').disabled=yt||localBusy||localEngine();$('voiceFile').disabled=yt||localBusy||localEngine();$('count').disabled=localBusy||!yt&&$('mode').value==='single';$('clipDuration').disabled=localBusy||!yt&&$('mode').value==='single';};
+const updateGenerateState=()=>{$('signout').disabled=localBusy;for(const id of ['file','processingEngine','tabYoutube','tabUpload','mode','count','clipDuration','start','end','duration','watermark','brand','useGtaBrand'])$(id).disabled=localBusy;$('brand').disabled=localBusy||!$('watermark').checked;const yt=sourceMode==='youtube';$('manualFields').hidden=yt||$('mode').value!=='single';$('rangeFields').hidden=yt||(!localEngine()&&$('mode').value==='batch');$('endField').hidden=!localEngine();const ready=yt?Boolean(youtubeId($('youtubeUrl').value.trim())&&$('rights').checked):Boolean($('file').files[0]||importedYoutubeFile);$('generate').disabled=localBusy||!ready;$('generate').title=ready?'Gerar vídeos com as configurações escolhidas':yt?'Informe um link e confirme os direitos de edição':'Selecione um vídeo';$('generate').textContent=yt?'Gerar clipes':$('mode').value==='batch'?'Gerar clipes':'Cortar seleção manual';$('mode').disabled=localBusy||yt;$('recordVoice').disabled=yt||localBusy||localEngine();$('voiceFile').disabled=yt||localBusy||localEngine();$('count').disabled=localBusy||!yt&&$('mode').value==='single';$('clipDuration').disabled=localBusy||!yt&&$('mode').value==='single';};
 $('youtubeUrl').addEventListener('input',updateGenerateState);$('rights').addEventListener('change',updateGenerateState);$('file').addEventListener('change',updateGenerateState);$('mode').addEventListener('change',updateGenerateState);updateGenerateState();
 
 
@@ -266,4 +268,7 @@ $('manualTimeline').addEventListener('click',()=>queueMicrotask(updateClipGuidan
 $('tabUpload').addEventListener('click',updateClipGuidance);$('tabYoutube').addEventListener('click',updateClipGuidance);
 $('resetClipRange').onclick=()=>{$('start').value='10';$('end').value='';$('start').dispatchEvent(new Event('input'));$('end').dispatchEvent(new Event('input'));$('resetClipRange').hidden=true;$('status').textContent='Intervalo corrigido: início em 10 segundos e final automático, 10 segundos antes de acabar o vídeo. Confira a quantidade e a duração no aviso acima e clique em “Gerar clipes” novamente.';updateClipGuidance();};
 bindClipGuidance();
+
+
+watermarkPreference=rememberWatermark({sb,input:$('brand'),preset:$('useGtaBrand'),status:$('brandSavedStatus')});
 

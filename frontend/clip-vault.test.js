@@ -19,3 +19,20 @@ test('failed upload remains retryable and appears on another device after retry'
     await ipad.load();assert.equal(otherRoot.children.length,1);assert.equal(otherRoot.children[0].className,'result-card saved-clip');
   }finally{globalThis.document=previousDocument;}
 });
+
+import {rememberWatermark,DEFAULT_WATERMARK} from './watermark-preference.js';
+test('last custom watermark restores on another device and GTA preset stays available',async()=>{
+  class Input extends EventTarget{value='';}
+  const remote={id:uid,user_metadata:{}};
+  const session={user:{id:uid,user_metadata:{}}};
+  const sb={auth:{getSession:async()=>({data:{session}}),getUser:async()=>({data:{user:remote}}),updateUser:async({data})=>{Object.assign(remote.user_metadata,data);return {error:null};}}};
+  const makeStorage=()=>{const map=new Map();return {getItem:k=>map.get(k),setItem:(k,v)=>map.set(k,v)};};
+  const input=new Input(),preset={},status={};
+  const first=rememberWatermark({sb,input,preset,status,storage:makeStorage()});
+  await first.restore(session);assert.equal(input.value,DEFAULT_WATERMARK);
+  input.value='MINHA MARCA';input.dispatchEvent(new Event('input'));first.flush();await first.settled();
+  const ipadInput=new Input(),ipadPreset={};
+  const ipad=rememberWatermark({sb,input:ipadInput,preset:ipadPreset,status:{},storage:makeStorage()});
+  await ipad.restore(session);assert.equal(ipadInput.value,'MINHA MARCA');
+  ipadPreset.onclick();await ipad.settled();assert.equal(ipadInput.value,'GTA.VI.VIRAL');assert.equal(remote.user_metadata.viralclip_watermark,'GTA.VI.VIRAL');
+});
