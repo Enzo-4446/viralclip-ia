@@ -2,11 +2,11 @@
 import asyncio, json, os, subprocess, time, uuid, threading
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Header
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
-router=APIRouter()
+def require_job_user(authorization: str = Header(default="")):\n    from app import require_user\n    return require_user(authorization)\n\nrouter=APIRouter()
 POOL=ThreadPoolExecutor(max_workers=1)
 LOCK=threading.Lock()
 JOBS={}
@@ -53,7 +53,7 @@ def _expire():
         for k in expired:_clean(JOBS.pop(k))
 
 @router.post("/jobs/upload")
-async def start_upload(file:UploadFile=File(...),mode:str=Form("batch"),brand:str=Form("VIRALCLIP"),settings:str=Form("{}"),start:float=Form(0),duration:int=Form(30),voice:UploadFile|None=File(None),user:dict=Depends(lambda:None)):
+async def start_upload(file:UploadFile=File(...),mode:str=Form("batch"),brand:str=Form("VIRALCLIP"),settings:str=Form("{}"),start:float=Form(0),duration:int=Form(30),voice:UploadFile|None=File(None),user:dict=Depends(require_job_user)):
     # Authentication dependency is injected by app.include_router(dependencies=...).
     from editor import options
     if mode not in ("batch","single"):raise HTTPException(400,"Modo inválido")
@@ -102,12 +102,12 @@ def _owned(jid,user):
         return job.copy()
 
 @router.get("/jobs/{jid}")
-def status(jid:str,user:dict=Depends(lambda:None)):
+def status(jid:str,user:dict=Depends(require_job_user)):
     job=_owned(jid,user)
     return {k:job[k] for k in ("job_id","state","stage","error") if k in job} | {"job_id":jid}
 
 @router.get("/jobs/{jid}/download")
-def download(jid:str,user:dict=Depends(lambda:None)):
+def download(jid:str,user:dict=Depends(require_job_user)):
     job=_owned(jid,user)
     if job["state"]!="finished":raise HTTPException(409,"Tarefa ainda não concluída")
     output=Path(job["output"])
@@ -115,7 +115,7 @@ def download(jid:str,user:dict=Depends(lambda:None)):
     return FileResponse(output,media_type="application/zip" if job["mode"]=="batch" else "video/mp4",filename="viralclip_cortes.zip" if job["mode"]=="batch" else "viralclip.mp4")
 
 @router.delete("/jobs/{jid}")
-def cancel(jid:str,user:dict=Depends(lambda:None)):
+def cancel(jid:str,user:dict=Depends(require_job_user)):
     job=_owned(jid,user)
     if job["state"] in ("queued","processing"):
         raise HTTPException(409,"Não é possível interromper uma renderização já iniciada")
