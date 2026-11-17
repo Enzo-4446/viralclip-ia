@@ -114,3 +114,30 @@ $('downloadYoutubeMp4').onclick=async()=>{
   }catch(error){$('youtubeCheck').textContent='Não foi possível obter o MP4: '+error.message}
   finally{btn.disabled=false}
 };
+
+
+$('importDirectMedia').onclick=async()=>{
+  const url=$('directMediaUrl').value.trim();
+  if(!url.startsWith('https://')){$('directMediaStatus').textContent='Informe um link HTTPS direto para MP4.';return}
+  const {data:{session}}=await sb.auth.getSession();
+  if(!session){$('directMediaStatus').textContent='Faça login para importar.';return}
+  const button=$('importDirectMedia');button.disabled=true;
+  $('directMediaStatus').textContent='Importando vídeo autorizado...';
+  try{
+    const body=new FormData();body.append('url',url);
+    const response=await fetch(api+'/media/import',{method:'POST',headers:{Authorization:'Bearer '+session.access_token},body});
+    if(!response.ok){const error=await response.json().catch(()=>({}));throw Error(error.detail||'Falha HTTP '+response.status)}
+    const blob=await response.blob();
+    importedYoutubeFile=new File([blob],'video_importado.mp4',{type:'video/mp4'});
+    try{const dt=new DataTransfer();dt.items.add(importedYoutubeFile);$('file').files=dt.files}catch{}
+    setSourceMode('upload');
+    if(localPreviewUrl)URL.revokeObjectURL(localPreviewUrl);
+    localPreviewUrl=URL.createObjectURL(importedYoutubeFile);
+    const video=document.createElement('video');video.src=localPreviewUrl;video.controls=true;video.playsInline=true;
+    $('videoPreview').replaceChildren(video);
+    $('directMediaStatus').textContent='MP4 importado com sucesso.';
+    $('status').textContent='Vídeo pronto para configurar e gerar clipes.';
+    updateGenerateState();
+  }catch(error){$('directMediaStatus').textContent=error.message}
+  finally{button.disabled=false}
+};
