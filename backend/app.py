@@ -188,3 +188,5 @@ async def batch_clips(file: UploadFile = File(...), brand: str = Form("VIRALCLIP
         return FileResponse(output,media_type="application/zip",filename="viralclip_10_cortes.zip",background=BackgroundTask(output.unlink,missing_ok=True))
     finally:
         src.unlink(missing_ok=True)
+        narration_path=ROOT/(job+".voice")
+        narration_path.unlink(missing_ok=True)
