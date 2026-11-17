@@ -318,3 +318,99 @@ async def import_media(url: str = Form(...), user: dict = Depends(require_user))
     except Exception:
         target.unlink(missing_ok=True)
         raise
+
+
+# Job-based upload pipeline inspired by ClipForge: bounded queue, observable state.
+from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
+import time
+from fastapi.responses import JSONResponse
+
+_job_pool=ThreadPoolExecutor(max_workers=1)
+_job_lock=Lock()
+_jobs={}
+_JOB_TTL=3600
+
+def _job_cleanup():
+    now=time.time()
+    with _job_lock:
+        expired=[k for k,v in _jobs.items() if now-v["created"]>_JOB_TTL and v["state"] in ("done","failed")]
+        for k in expired:
+            entry=_jobs.pop(k)
+            for p in entry["paths"]:
+                Path(p).unlink(missing_ok=True)
+
+def _render_job(job_id,src,out,brand,settings,voice,mode,start,duration):
+    with _job_lock: _jobs[job_id].update(state="rendering",message="FFmpeg processando o vídeo")
+    try:
+        if mode=="batch":
+            from batch import render_batch
+            render_batch(src,out,brand,10,settings,voice)
+        else:
+            from editor import render
+            render(src,out,brand,start,duration,settings,voice)
+        if not out.exists() or out.stat().st_size==0: raise RuntimeError("O renderizador não produziu arquivo")
+        with _job_lock: _jobs[job_id].update(state="done",message="Arquivo pronto para baixar")
+    except Exception as e:
+        with _job_lock: _jobs[job_id].update(state="failed",message=str(e)[:350])
+    finally:
+        src.unlink(missing_ok=True)
+        if voice: voice.unlink(missing_ok=True)
+
+@app.post("/jobs/upload",status_code=202)
+async def submit_upload_job(file:UploadFile=File(...),brand:str=Form("VIRALCLIP"),settings:str=Form("{}"),mode:str=Form("batch"),start:float=Form(0),duration:int=Form(30),voice:UploadFile|None=File(None),user:dict=Depends(require_user)):
+    from editor import options
+    _job_cleanup()
+    if mode not in ("single","batch"): raise HTTPException(400,"Modo inválido")
+    if not re.fullmatch(r"[\w @.-]{1,32}",brand,re.UNICODE): raise HTTPException(400,"Marca inválida")
+    if mode=="single" and (duration not in (30,45,60,90) or not math.isfinite(start) or start<0): raise HTTPException(400,"Corte inválido")
+    if file.content_type not in ("video/mp4","video/quicktime","video/x-matroska","video/webm","application/octet-stream"): raise HTTPException(415,"Formato não suportado")
+    try: options(settings)
+    except ValueError as e: raise HTTPException(400,str(e))
+    with _job_lock:
+        active=sum(v["state"] in ("queued","rendering") for v in _jobs.values())
+    if active>=2: raise HTTPException(429,"Servidor ocupado. Aguarde a tarefa anterior terminar.")
+    job_id=uuid.uuid4().hex
+    src=ROOT/(job_id+".input");out=ROOT/(job_id+(".zip" if mode=="batch" else ".mp4"))
+    voice_path=None
+    try:
+        size=0
+        with src.open("wb") as dest:
+            while chunk:=await file.read(1024*1024):
+                size+=len(chunk)
+                if size>MAX_BYTES: raise HTTPException(413,"Arquivo acima de 500 MB")
+                dest.write(chunk)
+        if voice:
+            voice_path=ROOT/(job_id+".voice")
+            size=0
+            with voice_path.open("wb") as dest:
+                while chunk:=await voice.read(1024*1024):
+                    size+=len(chunk)
+                    if size>50*1024*1024: raise HTTPException(413,"Narração acima de 50 MB")
+                    dest.write(chunk)
+        with _job_lock:
+            _jobs[job_id]={"user":user["id"],"state":"queued","message":"Aguardando processamento","created":time.time(),"paths":[str(src),str(out)]+([str(voice_path)] if voice_path else []),"output":str(out),"mode":mode}
+        _job_pool.submit(_render_job,job_id,src,out,brand,settings,voice_path,mode,start,duration)
+        return {"job_id":job_id,"state":"queued"}
+    except Exception:
+        src.unlink(missing_ok=True)
+        if voice_path: voice_path.unlink(missing_ok=True)
+        raise
+
+@app.get("/jobs/{job_id}")
+def job_status(job_id:str,user:dict=Depends(require_user)):
+    _job_cleanup()
+    with _job_lock:
+        job=_jobs.get(job_id)
+        if not job or job["user"]!=user["id"]: raise HTTPException(404,"Tarefa não encontrada")
+        return {"state":job["state"],"message":job["message"],"download_url":"/jobs/"+job_id+"/download" if job["state"]=="done" else None}
+
+@app.get("/jobs/{job_id}/download")
+def job_download(job_id:str,user:dict=Depends(require_user)):
+    with _job_lock:
+        job=_jobs.get(job_id)
+        if not job or job["user"]!=user["id"]: raise HTTPException(404,"Tarefa não encontrada")
+        if job["state"]!="done": raise HTTPException(409,"Arquivo ainda não está pronto")
+        output=Path(job["output"]);mode=job["mode"]
+    if not output.is_file(): raise HTTPException(410,"Arquivo expirado")
+    return FileResponse(output,media_type="application/zip" if mode=="batch" else "video/mp4",filename="viralclip_cortes.zip" if mode=="batch" else "viralclip.mp4")
