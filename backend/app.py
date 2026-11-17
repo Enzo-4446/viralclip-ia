@@ -45,7 +45,7 @@ def capabilities(user: dict = Depends(require_user)):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "ffmpeg": subprocess.run(["ffmpeg","-version"],capture_output=True,timeout=5).returncode == 0, "node": subprocess.run(["node","--version"],capture_output=True,text=True,timeout=5).stdout.strip(), "yt_dlp": subprocess.run(["yt-dlp","--version"],capture_output=True,text=True,timeout=5).stdout.strip()}
+    return {"status": "ok", "youtube_pot_provider": os.path.isfile("/opt/bgutil/server/build/main.js"), "ffmpeg": subprocess.run(["ffmpeg","-version"],capture_output=True,timeout=5).returncode == 0, "node": subprocess.run(["node","--version"],capture_output=True,text=True,timeout=5).stdout.strip(), "yt_dlp": subprocess.run(["yt-dlp","--version"],capture_output=True,text=True,timeout=5).stdout.strip()}
 
 @app.post("/clips")
 async def clips(file: UploadFile = File(...), brand: str = Form("VIRALCLIP"), start: float = Form(0), duration: int = Form(45), project_id: str = Form(""), settings: str = Form("{}"), voice: UploadFile | None = File(None), user: dict = Depends(require_user)):
