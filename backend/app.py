@@ -244,3 +244,36 @@ async def youtube_clips(url: str = Form(...), project_id: str = Form(...), brand
     finally:
         for temporary in ROOT.glob(job+".source.*"):
             temporary.unlink(missing_ok=True)
+
+@app.post("/youtube/check")
+async def check_youtube(url: str = Form(...), user: dict = Depends(require_user)):
+    """Preflight only: metadata availability does not guarantee stream download."""
+    parsed=urlparse(url)
+    host=(parsed.hostname or "").lower()
+    if parsed.scheme!="https" or parsed.port not in (None,443) or parsed.username or parsed.password or host not in ("youtube.com","www.youtube.com","m.youtube.com","youtu.be","www.youtu.be"):
+        raise HTTPException(400,"Cole uma URL HTTPS válida do YouTube")
+    video_id=(parse_qs(parsed.query).get("v",[None])[0] if parsed.path=="/watch" else parsed.path.strip("/").split("/")[-1])
+    if not video_id or not re.fullmatch(r"[A-Za-z0-9_-]{11}",video_id):
+        raise HTTPException(400,"Identificador do vídeo inválido")
+    canonical="https://www.youtube.com/watch?v="+video_id
+    cmd=["yt-dlp","--no-playlist","--skip-download","--dump-single-json","--no-warnings","--socket-timeout","12","--retries","1",canonical]
+    try:
+        result=await __import__("starlette.concurrency",fromlist=["run_in_threadpool"]).run_in_threadpool(lambda: subprocess.run(cmd,capture_output=True,text=True,timeout=40))
+    except subprocess.TimeoutExpired:
+        return {"status":"unknown","message":"O YouTube não respondeu no prazo. Você pode tentar gerar, mas o acesso não está confirmado."}
+    if result.returncode:
+        detail=(result.stderr or "").lower()
+        if any(k in detail for k in ("sign in","bot","cookies","confirm you")):
+            msg="O YouTube exigiu autenticação/verificação humana do servidor. A geração por link provavelmente falhará."
+        elif "private" in detail or "unavailable" in detail:
+            msg="Vídeo indisponível ou privado para este servidor."
+        else:
+            msg="Não foi possível confirmar acesso ao vídeo. A geração pode falhar."
+        return {"status":"blocked","message":msg}
+    try:
+        info=json.loads(result.stdout)
+    except (ValueError,TypeError):
+        return {"status":"unknown","message":"Metadados incompletos. A transferência não está confirmada."}
+    if info.get("is_live") or info.get("live_status")=="is_live":
+        return {"status":"blocked","message":"Lives em andamento não são suportadas. Use a gravação após o encerramento."}
+    return {"status":"available","title":str(info.get("title") or "")[:160],"duration":info.get("duration"),"message":"Metadados acessíveis ao servidor. Você pode clicar em Gerar clipes; a transferência completa ainda pode ser bloqueada."}
