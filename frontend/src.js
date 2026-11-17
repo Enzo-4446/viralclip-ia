@@ -1,8 +1,10 @@
 import {createClient} from '@supabase/supabase-js';
 const env=import.meta.env;
-const sb=createClient(env.VITE_SUPABASE_URL,env.VITE_SUPABASE_PUBLISHABLE_KEY);
+const sb=createClient(env.VITE_SUPABASE_URL||'https://zltpldhnaqiqkoqdiugp.supabase.co',env.VITE_SUPABASE_PUBLISHABLE_KEY||'sb_publishable_rfDyhC0aRYFk4QEnm3py1A_se2B2pJi');
 const api=(env.VITE_API_URL||'').replace(/\/$/,'');
 const $=id=>document.getElementById(id);
+window.addEventListener('error',e=>{const s=$('authStatus');if(s)s.textContent='Erro de inicialização: '+e.message});
+window.addEventListener('unhandledrejection',e=>{const s=$('authStatus');if(s)s.textContent='Falha de conexão: '+(e.reason?.message||String(e.reason))});
 async function refresh(){const {data:{session}}=await sb.auth.getSession();$('auth').hidden=!!session;$('app').hidden=!session;if(session)await loadProjects();}
 async function loadProjects(){const {data,error}=await sb.from('clip_projects').select('title,created_at').order('created_at',{ascending:false}).limit(20);$('projects').textContent=error?error.message:(data?.map(x=>x.title+' — '+new Date(x.created_at).toLocaleDateString('pt-BR')).join('\n')||'Nenhum projeto ainda.');$('projects').style.whiteSpace='pre-line';}
 $('signin').onclick=async()=>{const {error}=await sb.auth.signInWithPassword({email:$('email').value,password:$('password').value});$('authStatus').textContent=error?.message||'Autenticado';await refresh()};
