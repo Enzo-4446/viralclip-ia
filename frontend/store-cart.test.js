@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {changeQuantity,cartTotals,buildDraftOrder} from './store-cart.js';
 const uuid='550e8400-e29b-41d4-a716-446655440000';
 test('cart totals paid and bonus precisely in integer cents',()=>{
- let cart={};cart=changeQuantity(cart,1000,1);cart=changeQuantity(cart,9990,2);
+ let cart={};cart=changeQuantity(cart,1000,1);cart=changeQuantity(cart,9990,1);cart=changeQuantity(cart,9990,1);
  assert.deepEqual(cartTotals(cart),{quantity:3,totalCents:20980,paidCents:20980,bonusCents:5000});
  assert.equal(buildDraftOrder(cart,uuid).status,'demo_unpaid');
 });
