@@ -9,10 +9,15 @@ export function mountStore({root,openButton,closeButton}){
  const details=root.querySelector('#storeOrderDetails'),copy=root.querySelector('#storeCopy');
  if([grid,summary,status,items,count,total,checkout,order,qr,details,copy].some(x=>!x))throw new TypeError('Estrutura da loja incompleta');
  let cart={},draft=null;
+ const drawer=root.querySelector('#storeCartDrawer'),cartOpen=root.querySelector('#storeCartOpen'),cartClose=root.querySelector('#storeCartClose'),cartBackdrop=root.querySelector('#storeCartBackdrop'),bubble=root.querySelector('#storeCartBubble');
+ if([drawer,cartOpen,cartClose,cartBackdrop,bubble].some(x=>!x))throw new TypeError('Carrinho indisponível');
+ function showCart(){drawer.hidden=false;cartOpen.setAttribute('aria-expanded','true');cartClose.focus();}
+ function hideCart(){drawer.hidden=true;cartOpen.setAttribute('aria-expanded','false');cartOpen.focus();}
+ cartOpen.onclick=showCart;cartClose.onclick=hideCart;cartBackdrop.onclick=hideCart;
  function invalidateDraft(){draft=null;order.hidden=true;qr.replaceChildren();details.textContent='';}
  function renderCart(){
   items.replaceChildren();const totals=cartTotals(cart);
-  count.textContent=totals.quantity+' '+(totals.quantity===1?'item':'itens');total.textContent=formatBRL(totals.totalCents);
+  count.textContent=totals.quantity+' '+(totals.quantity===1?'item':'itens');bubble.textContent=String(totals.quantity);total.textContent=formatBRL(totals.totalCents);
   checkout.disabled=totals.quantity===0;
   if(!totals.quantity)items.append(el('p','muted','Seu carrinho está vazio. Escolha um pacote para começar.'));
   PACKAGES.forEach(pack=>{
@@ -27,7 +32,7 @@ export function mountStore({root,openButton,closeButton}){
   summary.textContent=totals.quantity?'Total '+formatBRL(totals.totalCents)+' · Créditos '+formatBRL(totals.paidCents)+' · Bônus '+formatBRL(totals.bonusCents):'Selecione um pacote para visualizar os detalhes.';
  }
  function update(price,delta){
-  try{cart=changeQuantity(cart,price,delta);invalidateDraft();renderCart();status.textContent='Carrinho atualizado. Nenhum pagamento realizado.';}
+  try{cart=changeQuantity(cart,price,delta);invalidateDraft();renderCart();if(delta>0)showCart();status.textContent='Carrinho atualizado. Nenhum pagamento realizado.';}
   catch(e){status.textContent=e.message;}
  }
  PACKAGES.forEach((pack,index)=>{
@@ -36,7 +41,7 @@ export function mountStore({root,openButton,closeButton}){
   card.append(el('span','store-package-caption',index===0?'Comece agora':pack.bonusCents?'Pacote especial':'Créditos flexíveis'));
   card.append(el('strong','store-package-price',formatBRL(pack.priceCents)));
   card.append(el('span','store-package-detail',pack.bonusCents?'+'+formatBRL(pack.bonusCents)+' de bônus':'Crédito integral para cortes'));
-  card.append(el('span','store-package-action','+ Adicionar ao carrinho'));
+  card.append(el('span','store-package-action','Adicionar ao carrinho'));
   card.onclick=()=>update(pack.priceCents,1);grid.append(card);
  });
  checkout.onclick=()=>{
@@ -53,13 +58,13 @@ export function mountStore({root,openButton,closeButton}){
   }catch(e){status.textContent=e.message;}
  };
  copy.onclick=()=>{if(!draft)return;void navigator.clipboard.writeText(draft.id).then(()=>{status.textContent='Identificação copiada.'}).catch(()=>{status.textContent='Não foi possível copiar automaticamente.';});};
- function close(){root.hidden=true;document.body.classList.remove('store-is-open');openButton.focus();}
+ function close(){drawer.hidden=true;cartOpen.setAttribute('aria-expanded','false');root.hidden=true;document.body.classList.remove('store-is-open');openButton.focus();}
  function open(){root.hidden=false;document.body.classList.add('store-is-open');closeButton.focus();}
  openButton.onclick=open;closeButton.onclick=close;
  root.addEventListener('click',e=>{if(e.target===root)close();});
- root.addEventListener('keydown',e=>{if(e.key==='Escape')close();});
+ root.addEventListener('keydown',e=>{if(e.key==='Escape'){if(!drawer.hidden)hideCart();else close();}});
  const info=root.querySelector('#storePricingInfo');
  if(info)info.textContent='5 cortes gratuitos de até 60 segundos · '+formatBRL(CENTS_PER_30_SECONDS)+' por bloco de 30 segundos após a franquia · Cobranças ainda não ativadas.';
  renderCart();
- return {open,close,clear(){root.hidden=true;document.body.classList.remove('store-is-open');cart={};invalidateDraft();renderCart();status.textContent='';}};
+ return {open,close,clear(){root.hidden=true;drawer.hidden=true;cartOpen.setAttribute('aria-expanded','false');document.body.classList.remove('store-is-open');cart={};invalidateDraft();renderCart();status.textContent='';}};
 }
