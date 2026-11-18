@@ -14,8 +14,9 @@ export function mountWalletPanel({sb,root,enabled=false}){
   const current=++sequence;
   text.textContent='Consultando créditos…';
   try{
-   const wallet=await client.getBalance();
+   const [wallet,adminCheck]=await Promise.all([client.getBalance(),sb.rpc('viral_admin_is_member')]);
    if(current!==sequence)return;
+   if(!adminCheck.error&&adminCheck.data===true){text.textContent='∞ · Créditos ilimitados · Conta Administrador (ADM)';return;}
    text.textContent='Saldo: '+formatBRL(wallet.paid_cents)+' · Bônus: '+formatBRL(wallet.bonus_cents)+' · Cortes gratuitos restantes: '+Math.max(0,FREE_CLIP_LIMIT-wallet.free_exports_used);
   }catch(error){
    if(current!==sequence)return;
