@@ -1,8 +1,18 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {createWalletClient} from './wallet-client.js';
-test('reserves with server-side RPC and unique key',async()=>{
- const calls=[];const sb={rpc:async(name,args)=>{calls.push({name,args});return {data:{id:'reservation-1'},error:null}},from:()=>({})};
- const wallet=createWalletClient(sb);const result=await wallet.reserve([{length:30}], '550e8400-e29b-41d4-a716-446655440000');
- assert.equal(result.id,'reservation-1');assert.equal(calls[0].name,'viral_reserve_export');assert.deepEqual(calls[0].args.p_segments,[{length:30}]);
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createWalletClient} from './wallet-client.js';
+
+test('browser cannot reserve or settle before secure server integration',async()=>{
+ let called=false;
+ const sb={rpc:async()=>{called=true;return {data:{}}},from:()=>({})};
+ const wallet=createWalletClient(sb);
+ await assert.rejects(wallet.reserve([{length:30}]),/Cobrança bloqueada/);
+ await assert.rejects(wallet.finish('reservation',true),/exclusivos do servidor/);
+ await assert.rejects(wallet.finish('reservation',false),/exclusivos do servidor/);
+ assert.equal(called,false);
 });
-test('browser cannot request refunds',async()=>{let called=false;const sb={rpc:async()=>{called=true;return {data:{}}},from:()=>({})};await assert.rejects(createWalletClient(sb).finish('reservation',false),/Estornos exigem/);assert.equal(called,false);});
-test('does not hide server rejection',async()=>{const sb={rpc:async()=>({error:new Error('Créditos insuficientes')}),from:()=>({})};await assert.rejects(createWalletClient(sb).reserve([{length:60}]),/Créditos insuficientes/);});
+test('quote remains available without charging',()=>{
+ const wallet=createWalletClient({rpc:()=>{},from:()=>{}});
+ assert.equal(wallet.quote([{length:45}],0).cents,20);
+ assert.equal(wallet.quote([{length:45}],0).free,true);
+});
