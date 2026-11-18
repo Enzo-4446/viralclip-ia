@@ -32,3 +32,10 @@ Exportar repositório e histórico, migrações SQL, Edge Functions, configuraç
 - GitHub Pages alterado para publicação somente por workflow_dispatch; novo workflow validate.yml executa testes e build em push sem publicação.
 - Migração para Google Drive por usuário, carteiras e pagamentos ainda não implementados. Não ativar créditos antes de RLS, transações e testes de pagamento.
 - Confirmar resultado do GitHub Actions antes de executar manualmente deploy; backup original permanece disponível.
+
+## Iteração 4 — carteira transacional (código preparado, não implantado)
+- SQL revisável em docs/viral-wallet-schema.sql: carteiras por auth.uid(), ledger imutável para usuários, reservas idempotentes por request_key, cálculo de preço no Postgres, bloqueio FOR UPDATE e estorno de reserva cancelada.
+- RPCs viral_reserve_export e viral_finish_export; frontend/wallet-client.js fornece cliente e testes de contrato, mas NÃO está ligado ao botão Gerar.
+- O projeto Supabase referenciado pelo frontend (zltpldhnaqiqkoqdiugp) não apareceu entre os projetos acessíveis na conexão Supabase atual. **Não executar o SQL em outro projeto.** É necessário conectar a conta/projeto correto ou fornecer autorização de acesso.
+- Nenhum saldo real foi criado, nenhuma cobrança foi ativada. Fluxo de sucesso declarado pelo navegador ainda requer estratégia antifraude antes de habilitar pagamentos.
+- A base de dados existente deve ser inspecionada, com backup, antes de aplicar migração; executar RLS/advisors e testes com usuários distintos após implantação.
