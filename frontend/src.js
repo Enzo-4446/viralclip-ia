@@ -1,4 +1,5 @@
 import {rememberWatermark} from './watermark-preference.js';
+import {mountVersionNotice} from './app-version.js';
 import {createClipVault} from './clip-vault.js';
 import '@fontsource-variable/manrope';
 import {mountTimeline} from './timeline.js';
@@ -27,6 +28,8 @@ $('signin').onclick=async()=>{const values=credentials();if(!values)return;$('au
 $('signup').onclick=async()=>{const values=credentials();if(!values)return;$('authStatus').textContent='Criando conta...';try{const {error}=await sb.auth.signUp({...values,options:{emailRedirectTo:authRedirectUrl}});$('authStatus').textContent=error?.message||'Conta criada. Verifique seu e-mail se a confirmação estiver habilitada.';if(!error)await refresh()}catch(e){$('authStatus').textContent=e.message}};
 $('signout').onclick=async()=>{await sb.auth.signOut();await refresh()};
 let localBusy=false,localController=null,manualTimeline=null;
+const checkVersion=mountVersionNotice({root:document.querySelector('main'),version:__APP_VERSION__,isBusy:()=>localBusy});
+checkVersion();window.addEventListener('focus',checkVersion);setInterval(checkVersion,120000);
 let sourceMode='upload';let localPreviewUrl=null;let importedYoutubeFile=null;
 const setSourceMode=mode=>{if(localBusy)return;sourceMode=mode;$('youtubePanel').hidden=mode!=='youtube';$('uploadPanel').hidden=mode!=='upload';$('tabYoutube').classList.toggle('active',mode==='youtube');$('tabUpload').classList.toggle('active',mode==='upload');$('status').textContent='';$('download').hidden=true;const engine=$('processingEngine');if(engine){engine.disabled=mode==='youtube';$('localNote').textContent=mode==='youtube'?'Links do YouTube usam o servidor. Para corte local, envie um arquivo MP4 do computador.':engine.value==='local'?'O vídeo é cortado neste dispositivo. Depois, apenas os cortes prontos são enviados para sua conta.':'Edição avançada: o vídeo será enviado ao servidor Render.';}updateGenerateState()};
 $('tabYoutube').onclick=()=>setSourceMode('youtube');$('tabUpload').onclick=()=>setSourceMode('upload');

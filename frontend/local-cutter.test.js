@@ -80,3 +80,8 @@ test('offline export refuses silently discarded audio and releases conversion',a
   await assert.rejects(renderOfflineClip({width:1920,height:1080,duration:10,input:{}},{size:1000},{start:0,length:2},{},()=>{},undefined,{ConversionClass:Conversion,OutputClass:Output,TargetClass:Target,FormatClass:Format}),/áudio/);
   assert.equal(canceled,true);
 });
+
+import {updateUrl} from './app-version.js';
+test('version refresh keeps the site path and replaces a stale cache key',()=>{
+  assert.equal(updateUrl('https://enzo-4446.github.io/viralclip-ia/?v=old&other=1','new'), 'https://enzo-4446.github.io/viralclip-ia/?v=new&other=1');
+});
