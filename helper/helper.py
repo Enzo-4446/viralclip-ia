@@ -41,7 +41,6 @@ app.add_middleware(
     CORSMiddleware, allow_origins=sorted(ALLOWED),
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
-    allow_private_network=True,
 )
 
 @app.middleware("http")
@@ -49,6 +48,10 @@ async def reject_origin(request: Request, call_next):
     origin = request.headers.get("origin")
     if origin not in ALLOWED:
         return JSONResponse(status_code=403, content={"detail": "Origem não autorizada"})
+    if request.method == "OPTIONS" and request.headers.get("access-control-request-private-network") == "true":
+        response = await call_next(request)
+        response.headers["Access-Control-Allow-Private-Network"] = "true"
+        return response
     response = await call_next(request)
     if request.method == "OPTIONS":
         response.headers["Access-Control-Allow-Private-Network"] = "true"
