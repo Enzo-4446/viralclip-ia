@@ -39,3 +39,11 @@ Exportar repositório e histórico, migrações SQL, Edge Functions, configuraç
 - O projeto Supabase referenciado pelo frontend (zltpldhnaqiqkoqdiugp) não apareceu entre os projetos acessíveis na conexão Supabase atual. **Não executar o SQL em outro projeto.** É necessário conectar a conta/projeto correto ou fornecer autorização de acesso.
 - Nenhum saldo real foi criado, nenhuma cobrança foi ativada. Fluxo de sucesso declarado pelo navegador ainda requer estratégia antifraude antes de habilitar pagamentos.
 - A base de dados existente deve ser inspecionada, com backup, antes de aplicar migração; executar RLS/advisors e testes com usuários distintos após implantação.
+
+## Iteração 5 — 2026-11-18: Supabase de produção verificado
+- Conexão correta: Supabase `PROJETO AGRO BURU`, projeto `viralclip.ia`, ref `zltpldhnaqiqkoqdiugp`. A nota anterior sobre projeto indisponível está superada.
+- Migrações aplicadas no projeto correto: `viral_wallet_secure_reservations`, `viral_wallet_server_only_refunds`, `viral_wallet_refund_lock_order`.
+- Tabelas criadas com RLS: `viral_wallets`, `viral_export_reservations`, `viral_wallet_ledger`. Authenticated tem SELECT apenas; sem INSERT/UPDATE/DELETE direto. Anon não executa RPCs. Estorno apenas service_role.
+- SQL original e patch de segurança versionados em `docs/viral-wallet-schema.sql` e `docs/viral-wallet-security-patch.sql`. Aplicar ambos, nesta ordem, ao inicializar outro projeto.
+- O navegador pode ser adulterado. Como o FFmpeg local roda integralmente no cliente, **não existe garantia criptográfica de impedir geração fora da carteira** nem de verificar falha real para estorno automático. Para monetização antifraude é necessário backend confiável de geração ou outro protocolo de entrega controlada, e estorno validado no servidor. O frontend permanece com `VITE_COMMERCIAL_WALLET_ENABLED` desativado por padrão, sem cobrar nem bloquear exportações atuais.
+- Supabase security advisors reportam dois SECURITY DEFINER intencionalmente executáveis por usuários autenticados, com validação de auth.uid(), e aviso de proteção de senhas vazadas desativada. Revisão adicional antes do lançamento.
