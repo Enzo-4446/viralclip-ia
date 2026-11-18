@@ -18,7 +18,7 @@ export function createWalletClient(sb){
    return data;
   },
   async finish(id,success){
-   if(!id||typeof success!=='boolean')throw new TypeError('Resultado de exportação inválido.');
+   if(!id||success!==true)throw new TypeError('Estornos exigem confirmação segura pelo servidor.');
    const {data,error}=await sb.rpc('viral_finish_export',{p_reservation_id:id,p_success:success});
    if(error)throw error;
    return data;
