@@ -1,3 +1,4 @@
+import {attachClipSharing} from './share-clip.js';
 import {Upload} from 'tus-js-client';
 export const CLIP_BUCKET='clip-exports';
 export const MAX_CLIP_BYTES=50*1024*1024;
@@ -30,6 +31,8 @@ export function createClipVault({sb,url,root,message,refreshButton,pendingRoot,U
         const prepare=document.createElement('button');prepare.type='button';prepare.className='button-secondary';prepare.textContent='Abrir / baixar vídeo';
         const remove=document.createElement('button');remove.type='button';remove.className='delete-clip';remove.textContent='Apagar da minha conta';
         const links=document.createElement('div');
+        const photos=document.createElement('button');
+        attachClipSharing({button:photos,info,name:file.name,getBlob:async()=>{const user=await currentUser();if(user.user.id!==session.user.id)throw Error('A conta mudou. Atualize a lista.');const {data,error}=await sb.storage.from(CLIP_BUCKET).download(path);if(error)throw error;return data;}});
         prepare.onclick=async()=>{prepare.disabled=true;info.textContent='Preparando acesso privado...';try{
           const user=await currentUser();if(user.user.id!==session.user.id)throw Error('A conta mudou. Atualize a lista.');
           const store=sb.storage.from(CLIP_BUCKET);
@@ -41,7 +44,7 @@ export function createClipVault({sb,url,root,message,refreshButton,pendingRoot,U
           links.replaceChildren(video,save,open);info.textContent='No iPad: baixe em Arquivos ou abra o vídeo e use Compartilhar → Salvar Vídeo, quando disponível. Apague da conta apenas depois de conferir o arquivo.';
         }catch(error){info.textContent='Falha ao abrir: '+error.message;}finally{prepare.disabled=false;}};
         remove.onclick=async()=>{if(!window.confirm('Apagar este corte da sua conta? Ele deixará de aparecer no PC e no iPad. Confira se já salvou uma cópia.'))return;remove.disabled=true;try{const user=await currentUser();if(user.user.id!==session.user.id)throw Error('A conta mudou. Atualize a lista.');const {error}=await sb.storage.from(CLIP_BUCKET).remove([path]);if(error)throw error;links.querySelector('video')?.pause();card.remove();message.textContent='Corte apagado da conta.';}catch(error){info.textContent='Não foi possível apagar: '+error.message;remove.disabled=false;}};
-        card.append(title,detail,prepare,links,info,remove);root.append(card);
+        card.append(title,detail,photos,prepare,links,info,remove);root.append(card);
       }
     }catch(error){if(sequence===loadSequence)message.textContent='Não foi possível carregar os cortes salvos: '+error.message;}
   }
@@ -79,3 +82,4 @@ export function createClipVault({sb,url,root,message,refreshButton,pendingRoot,U
   refreshButton.onclick=load;
   return {load,saveFiles,clear(){++loadSequence;root.querySelectorAll('video').forEach(v=>v.pause());root.replaceChildren();pendingRoot.replaceChildren();message.textContent='';}};
 }
+

@@ -36,3 +36,17 @@ test('last custom watermark restores on another device and GTA preset stays avai
   await ipad.restore(session);assert.equal(ipadInput.value,'MINHA MARCA');
   ipadPreset.onclick();await ipad.settled();assert.equal(ipadInput.value,'GTA.VI.VIRAL');assert.equal(remote.user_metadata.viralclip_watermark,'GTA.VI.VIRAL');
 });
+
+import {attachClipSharing} from './share-clip.js';
+test('native sharing sends the actual MP4 on a second click without refetching',async()=>{
+  const button={},info={};let loads=0,shared=null;
+  const nav={canShare:({files})=>files[0].type==='video/mp4',share:async data=>{shared=data;}};
+  attachClipSharing({button,info,name:'clip.mp4',nav,getBlob:async()=>{loads++;return new Blob(['video'],{type:'video/mp4'});}});
+  await button.onclick();assert.equal(loads,1);assert.equal(shared,null);assert.match(button.textContent,/2\./);
+  await button.onclick();assert.equal(loads,1);assert.equal(shared.files[0].name,'clip.mp4');assert.equal(shared.files[0].type,'video/mp4');assert.equal('url' in shared,false);
+});
+test('canceling native share leaves clip prepared for retry',async()=>{
+  const button={},info={};let attempts=0;
+  attachClipSharing({button,info,name:'clip.mp4',nav:{canShare:()=>true,share:async()=>{attempts++;throw new DOMException('Canceled','AbortError');}},getBlob:async()=>new Blob(['video'])});
+  await button.onclick();await button.onclick();assert.match(info.textContent,/cancelado/);assert.equal(button.disabled,false);await button.onclick();assert.equal(attempts,2);
+});
