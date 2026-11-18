@@ -16,7 +16,21 @@ function renderTable(root,columns,rows){
 export function mountAdminPanel({sb,root}){
  if(!root||!sb?.rpc)throw new TypeError('Painel ADM indisponível.');
  root.hidden=true;
- let epoch=0,authorized=false,busy=false;
+ let epoch=0,authorized=false,busy=false,opened=false;
+ const launch=document.getElementById('adminOpen');
+ const dialog=make('div','','admin-dialog');
+ const dialogHead=make('div','','admin-dialog-head');
+ const headText=make('div');
+ const close=make('button','✕ Fechar','admin-close');close.type='button';
+ const content=make('div','','admin-dialog-content');
+ const tabs=make('div','','admin-tabs');tabs.setAttribute('role','tablist');
+ const views=make('div');
+ function closePanel(){opened=false;root.hidden=true;document.body.classList.remove('admin-is-open');launch?.focus();}
+ function openPanel(){if(!authorized)return;opened=true;root.hidden=false;document.body.classList.add('admin-is-open');void refresh();close.focus();}
+ if(launch)launch.onclick=openPanel;
+ close.onclick=closePanel;
+ root.addEventListener('click',e=>{if(e.target===root)closePanel();});
+ root.addEventListener('keydown',e=>{if(e.key==='Escape'&&opened)closePanel();});
  const heading=make('h3','Enzo Salmazo · Painel ADM');
  const unlimited=make('p','∞  Créditos ilimitados · Acesso administrativo','muted');
  const note=make('p','Ajustes são registrados e auditados no banco. Nunca informe chaves secretas aqui.','muted');
@@ -32,10 +46,29 @@ export function mountAdminPanel({sb,root}){
  const submit=make('button','Registrar ajuste financeiro');submit.type='submit';
  form.append(make('h4','Ajuste auditado de saldo'),user,paid,bonus,reason,submit);
  const section=(title,content)=>{const wrap=make('section');wrap.append(make('h4',title),content);return wrap;};
- root.append(heading,unlimited,note,refreshButton,status,form,section('Usuários',usersArea),section('Carteiras',walletArea),section('Reservas',reservationArea),section('Extrato',ledgerArea),section('Auditoria administrativa',auditArea));
+ headText.append(heading,unlimited);dialogHead.append(headText,close);
+ const screens=[
+  ['Visão geral',section('Visão geral',note)],
+  ['Usuários',section('Usuários',usersArea)],
+  ['Carteiras',section('Carteiras',walletArea)],
+  ['Reservas',section('Reservas',reservationArea)],
+  ['Extrato',section('Extrato',ledgerArea)],
+  ['Auditoria',section('Auditoria administrativa',auditArea)],
+  ['Ajustar saldo',section('Ajuste auditado',form)]
+ ];
+ const screenButtons=[];
+ function activate(index){
+  screens.forEach(([name,view],i)=>{view.hidden=i!==index;screenButtons[i].setAttribute('aria-selected',String(i===index));});
+ }
+ screens.forEach(([name,view],i)=>{
+  const button=make('button',name);button.type='button';button.setAttribute('role','tab');
+  button.onclick=()=>activate(i);screenButtons.push(button);tabs.append(button);view.classList.add('admin-view');views.append(view);
+ });
+ form.classList.add('admin-form');
+ content.append(refreshButton,status,tabs,views);dialog.append(dialogHead,content);root.append(dialog);activate(0);
  const cents=value=>{const n=Number(value);if(!Number.isFinite(n)||!Number.isSafeInteger(Math.round(n*100))||Math.abs(n)>1000)throw Error('Valor fora do limite de R$ 1.000,00 por ajuste.');return Math.round(n*100);};
  async function refresh(){
-  if(!authorized)return;
+  if(!authorized||!opened)return;
   const seq=++epoch;status.textContent='Consultando registros administrativos…';
   const {data,error}=await sb.rpc('viral_admin_overview',{p_limit:40});
   if(seq!==epoch)return;
@@ -53,8 +86,8 @@ export function mountAdminPanel({sb,root}){
   try{
    const {data,error}=await sb.rpc('viral_admin_is_member');
    if(seq!==epoch)return;
-   authorized=!error&&data===true;root.hidden=!authorized;
-   if(authorized)await refresh();
+   authorized=!error&&data===true;if(launch)launch.hidden=!authorized;
+   if(!authorized)closePanel();
   }catch{if(seq===epoch){authorized=false;root.hidden=true;}}
  }
  refreshButton.onclick=()=>{void refresh();};
@@ -74,5 +107,5 @@ export function mountAdminPanel({sb,root}){
   }catch(e){status.textContent='Ajuste não realizado: '+e.message;}
   finally{busy=false;submit.disabled=false;}
  };
- return {check,refresh,clear(){epoch++;authorized=false;root.hidden=true;usersArea.replaceChildren();walletArea.replaceChildren();reservationArea.replaceChildren();ledgerArea.replaceChildren();auditArea.replaceChildren();status.textContent='';}};
+ return {check,refresh,clear(){epoch++;authorized=false;root.hidden=true;opened=false;document.body.classList.remove('admin-is-open');if(launch)launch.hidden=true;usersArea.replaceChildren();walletArea.replaceChildren();reservationArea.replaceChildren();ledgerArea.replaceChildren();auditArea.replaceChildren();status.textContent='';}};
 }
