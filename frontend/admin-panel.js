@@ -21,7 +21,7 @@ export function mountAdminPanel({sb,root}){
  const note=make('p','Ajustes são registrados e auditados no banco. Nunca informe chaves secretas aqui.','muted');
  const status=make('p','','muted');status.setAttribute('role','status');status.setAttribute('aria-live','polite');
  const refreshButton=make('button','Atualizar dados');refreshButton.type='button';
- const walletArea=make('div'),reservationArea=make('div'),ledgerArea=make('div'),auditArea=make('div');
+ const usersArea=make('div'),walletArea=make('div'),reservationArea=make('div'),ledgerArea=make('div'),auditArea=make('div');
  const form=make('form');form.autocomplete='off';
  const user=make('input'),paid=make('input'),bonus=make('input'),reason=make('textarea');
  user.placeholder='UUID do usuário';user.required=true;user.maxLength=36;
@@ -31,7 +31,7 @@ export function mountAdminPanel({sb,root}){
  const submit=make('button','Registrar ajuste financeiro');submit.type='submit';
  form.append(make('h4','Ajuste auditado de saldo'),user,paid,bonus,reason,submit);
  const section=(title,content)=>{const wrap=make('section');wrap.append(make('h4',title),content);return wrap;};
- root.append(heading,note,refreshButton,status,form,section('Carteiras',walletArea),section('Reservas',reservationArea),section('Extrato',ledgerArea),section('Auditoria administrativa',auditArea));
+ root.append(heading,note,refreshButton,status,form,section('Usuários',usersArea),section('Carteiras',walletArea),section('Reservas',reservationArea),section('Extrato',ledgerArea),section('Auditoria administrativa',auditArea));
  const cents=value=>{const n=Number(value);if(!Number.isFinite(n)||!Number.isSafeInteger(Math.round(n*100))||Math.abs(n)>1000)throw Error('Valor fora do limite de R$ 1.000,00 por ajuste.');return Math.round(n*100);};
  async function refresh(){
   if(!authorized)return;
@@ -39,11 +39,12 @@ export function mountAdminPanel({sb,root}){
   const {data,error}=await sb.rpc('viral_admin_overview',{p_limit:40});
   if(seq!==epoch)return;
   if(error){status.textContent='Falha ao consultar: '+error.message;return;}
+  renderTable(usersArea,[['id','ID'],['email','E-mail'],['created_at','Cadastro'],['last_sign_in_at','Último acesso']],data?.users||[]);
   const wallets=(data?.wallets||[]).map(x=>({...x,paid_cents:formatBRL(x.paid_cents),bonus_cents:formatBRL(x.bonus_cents)}));
   renderTable(walletArea,[['user_id','Usuário'],['paid_cents','Pago'],['bonus_cents','Bônus'],['free_exports_used','Grátis usados']],wallets);
   renderTable(reservationArea,[['id','Reserva'],['user_id','Usuário'],['total_cents','Centavos'],['status','Estado'],['created_at','Data']],data?.reservations||[]);
   renderTable(ledgerArea,[['user_id','Usuário'],['kind','Operação'],['paid_delta','Pago (cent.)'],['bonus_delta','Bônus (cent.)'],['created_at','Data']],data?.ledger||[]);
-  renderTable(auditArea,[['actor_id','Administrador'],['target_user_id','Usuário'],['action','Ação'],['amount_cents','Pago (cent.)'],['reason','Justificativa']],data?.audit||[]);
+  renderTable(auditArea,[['actor_id','Administrador'],['target_user_id','Usuário'],['action','Ação'],['amount_cents','Pago (cent.)'],['bonus_amount_cents','Bônus (cent.)'],['reason','Justificativa']],data?.audit||[]);
   status.textContent='Registros atualizados a partir do Supabase.';
  }
  async function check(){
@@ -72,5 +73,5 @@ export function mountAdminPanel({sb,root}){
   }catch(e){status.textContent='Ajuste não realizado: '+e.message;}
   finally{busy=false;submit.disabled=false;}
  };
- return {check,refresh,clear(){epoch++;authorized=false;root.hidden=true;walletArea.replaceChildren();reservationArea.replaceChildren();ledgerArea.replaceChildren();auditArea.replaceChildren();status.textContent='';}};
+ return {check,refresh,clear(){epoch++;authorized=false;root.hidden=true;usersArea.replaceChildren();walletArea.replaceChildren();reservationArea.replaceChildren();ledgerArea.replaceChildren();auditArea.replaceChildren();status.textContent='';}};
 }
