@@ -11,6 +11,30 @@ app = FastAPI(title="ViralClip IA - protótipo local")
 allowed_origins = list(dict.fromkeys(["https://enzo-4446.github.io"] + [x.strip().rstrip("/") for x in os.getenv("FRONTEND_ORIGIN", "").split(",") if x.strip()]))
 app.add_middleware(CORSMiddleware, allow_origins=allowed_origins, allow_methods=["GET", "POST", "DELETE", "OPTIONS"], allow_headers=["Authorization", "Content-Type"], max_age=600)
 
+# Commercial release safety switch: all legacy export routes are disabled in
+# commercial mode until they are integrated with a trusted wallet settlement.
+# This gate runs BEFORE any file processing, including async job submission.
+COMMERCIAL_ENFORCEMENT = os.getenv("COMMERCIAL_ENFORCEMENT", "off").strip().lower()
+LEGACY_EXPORT_PATHS = frozenset({
+    "/clips", "/clips/batch", "/clips/youtube",
+    "/youtube/download", "/media/import", "/jobs/upload"
+})
+if COMMERCIAL_ENFORCEMENT not in ("off", "strict"):
+    raise RuntimeError("COMMERCIAL_ENFORCEMENT must be 'off' or 'strict'")
+
+@app.middleware("http")
+async def commercial_export_gate(request, call_next):
+    path = request.url.path.rstrip("/") or "/"
+    if COMMERCIAL_ENFORCEMENT == "strict" and path in LEGACY_EXPORT_PATHS:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=503,
+            content={"detail":"Exportação comercial temporariamente indisponível. Nenhum crédito foi cobrado."},
+            headers={"Cache-Control":"no-store"}
+        )
+    return await call_next(request)
+
+
 def require_user(authorization: str = Header(default="")):
     base = os.getenv("SUPABASE_URL", "").rstrip("/")
     key = os.getenv("SUPABASE_PUBLISHABLE_KEY", "")
