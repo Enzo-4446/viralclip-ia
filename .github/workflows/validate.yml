@@ -28,6 +28,7 @@ jobs:
       - name: Validate backend security gate
         run: |
           python -m py_compile backend/app.py
+          python -m pip install --disable-pip-version-check pytest
           python -m pytest -q backend/test_commercial_gate.py
       - name: Production build
         working-directory: frontend
