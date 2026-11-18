@@ -1,3 +1,4 @@
+import {renderVideoFrames} from './video-frames.js';
 import {drawWatermark} from './watermark.js';
 export function timelineBounds(total,seconds,skipStart,skipEnd,end='') {
   const min=Number(skipStart),tail=Number(skipEnd),length=Number(seconds);
@@ -7,7 +8,7 @@ export function timelineBounds(total,seconds,skipStart,skipEnd,end='') {
 }
 export function mountTimeline({preview,root,mode,duration,start,end,watermark,brand,engine,generate,trimStart,trimEnd}) {
   const $=id=>root.querySelector('#'+id);
-  let video=null,total=0,selected=10,queue=[],busy=false,playing=false,animationFrame=null;
+  let video=null,total=0,selected=10,queue=[],busy=false,playing=false,stopMark=()=>{},seekTimer=null,requestedSeek=null,queueSignature='';
   const overlay=document.createElement('canvas');overlay.className='watermark-overlay';
   const local=()=>engine.value==='local';
   const length=()=>Number(duration.value);
@@ -15,18 +16,21 @@ export function mountTimeline({preview,root,mode,duration,start,end,watermark,br
   const first=()=>bounds().min;
   const max=()=>bounds().max;
   const fmt=t=>{const n=Math.max(0,t);return Math.floor(n/60)+':'+(n%60).toFixed(1).padStart(4,'0');};
-  function paintMark(){
+  function paintMark(time){
+    if(!video||!video.videoWidth||!overlay.width||!overlay.height)return;
+    overlay.hidden=!watermark.checked||!local();
+    const ctx=overlay.getContext('2d');ctx.clearRect(0,0,overlay.width,overlay.height);
+    if(!overlay.hidden)drawWatermark(ctx,overlay.width,overlay.height,brand.value,typeof time==='number'?time:video.currentTime);
+  }
+  function resizeMark(){
     if(!video||!video.videoWidth)return;
     const box=preview.getBoundingClientRect(),scale=Math.min(box.width/video.videoWidth,box.height/video.videoHeight);
-    overlay.width=Math.round(video.videoWidth*scale);overlay.height=Math.round(video.videoHeight*scale);
-    overlay.style.width=overlay.width+'px';overlay.style.height=overlay.height+'px';
-    overlay.hidden=!watermark.checked||!local();
-    drawWatermark(overlay.getContext('2d'),overlay.width,overlay.height,brand.value,video.currentTime);
+    const width=Math.max(1,Math.round(video.videoWidth*scale)),height=Math.max(1,Math.round(video.videoHeight*scale));
+    if(overlay.width!==width||overlay.height!==height){overlay.width=width;overlay.height=height;overlay.style.width=width+'px';overlay.style.height=height+'px';}
+    paintMark();
   }
-  function animateMark(){
-    cancelAnimationFrame(animationFrame);paintMark();
-    if(video&&!video.paused&&!video.ended)animationFrame=requestAnimationFrame(animateMark);
-  }
+  function animateMark(){stopMark();paintMark();stopMark=renderVideoFrames(video,paintMark,{fps:30});}
+  function flushSeek(){seekTimer=null;if(!video||requestedSeek==null)return;if(video.seeking){seekTimer=setTimeout(flushSeek,80);return;}const time=requestedSeek;requestedSeek=null;video.currentTime=time;}
   function render(){
     root.hidden=!local()||mode.value!=='single'||!video;
     $('timelineDuration').value=duration.value;
@@ -47,16 +51,17 @@ export function mountTimeline({preview,root,mode,duration,start,end,watermark,br
     $('timelineDuration').disabled=busy;
     $('addSelection').disabled=!valid||busy||queue.length>=10;
     $('cutSelection').textContent=queue.length?'Cortar '+queue.length+' trechos de '+length()+'s':'Cortar trecho de '+length()+'s';
-    $('selectionQueue').replaceChildren();
-    queue.forEach((item,index)=>{const row=document.createElement('div');row.className='queued-cut';const text=document.createElement('span');text.textContent=(index+1)+'. '+fmt(item.start)+' → '+fmt(item.start+length());const remove=document.createElement('button');remove.type='button';remove.textContent='Remover';remove.disabled=busy;remove.onclick=()=>{queue.splice(index,1);render();};row.append(text,remove);$('selectionQueue').append(row);});
+    const signature=queue.map(x=>x.start).join(',')+'|'+length()+'|'+busy;
+    if(signature!==queueSignature){queueSignature=signature;$('selectionQueue').replaceChildren();
+    queue.forEach((item,index)=>{const row=document.createElement('div');row.className='queued-cut';const text=document.createElement('span');text.textContent=(index+1)+'. '+fmt(item.start)+' → '+fmt(item.start+length());const remove=document.createElement('button');remove.type='button';remove.textContent='Remover';remove.disabled=busy;remove.onclick=()=>{queue.splice(index,1);render();};row.append(text,remove);$('selectionQueue').append(row);});}
     if(valid&&mode.value==='single'&&document.activeElement!==start)start.value=selected.toFixed(2);
     paintMark();
   }
-  function choose(value,seek=true){if(busy||!video)return;selected=Number(value);render();if(seek&&bounds().valid){playing=false;video.pause();video.currentTime=selected;}}
+  function choose(value,seek=true){if(busy||!video)return;selected=Number(value);render();if(seek&&bounds().valid){playing=false;video.pause();requestedSeek=selected;if(seekTimer==null)seekTimer=setTimeout(flushSeek,80);}}
   function bindVideo(){
     const next=preview.querySelector('video');if(next===video)return;
-    cancelAnimationFrame(animationFrame);video?.pause();video=next;queue=[];playing=false;total=0;selected=10;
-    if(video){const ready=()=>{total=video.duration;end.value='';start.value='';selected=Math.max(0,Number(trimStart.value)||0);render();if(bounds().valid)video.currentTime=selected;video.dispatchEvent(new Event('cliprangechange'));};video.addEventListener('loadedmetadata',ready);video.addEventListener('play',animateMark);video.addEventListener('pause',paintMark);video.addEventListener('seeked',paintMark);video.addEventListener('timeupdate',()=>{if(playing&&video.currentTime>=selected+length()){video.pause();playing=false;}});if(video.readyState>=1)ready();preview.append(overlay);}else overlay.remove();render();
+    stopMark();clearTimeout(seekTimer);seekTimer=null;requestedSeek=null;video?.pause();video=next;queue=[];playing=false;total=0;selected=10;
+    if(video){const ready=()=>{total=video.duration;end.value='';start.value='';selected=Math.max(0,Number(trimStart.value)||0);render();resizeMark();if(bounds().valid)video.currentTime=selected;video.dispatchEvent(new Event('cliprangechange'));};video.addEventListener('loadedmetadata',ready);video.addEventListener('play',animateMark);video.addEventListener('pause',()=>{stopMark();paintMark();});video.addEventListener('seeked',paintMark);video.addEventListener('timeupdate',()=>{if(playing&&video.currentTime>=selected+length()){video.pause();playing=false;}});if(video.readyState>=1)ready();preview.append(overlay);}else overlay.remove();render();
   }
   $('selectionStart').oninput=e=>choose(e.target.value);
   let dragging=false,anchor=0;
@@ -73,9 +78,10 @@ export function mountTimeline({preview,root,mode,duration,start,end,watermark,br
   $('addSelection').onclick=()=>{if(queue.some(x=>Math.abs(x.start-selected)<.05))return;queue.push({start:selected});render();};
   $('cutSelection').onclick=()=>{video?.pause();generate.click();};
   mode.addEventListener('change',render);engine.addEventListener('change',render);watermark.addEventListener('change',paintMark);brand.addEventListener('input',paintMark);
-  new MutationObserver(bindVideo).observe(preview,{childList:true});new ResizeObserver(paintMark).observe(preview);
-  bindVideo();document.fonts.ready.then(paintMark);
-  return {getSelections:()=>queue.length?queue.map(x=>({...x})):[{start:selected}],setBusy(value){busy=value;if(value){playing=false;video?.pause();}render();},refresh:render};
+  new MutationObserver(bindVideo).observe(preview,{childList:true});new ResizeObserver(resizeMark).observe(preview);
+  bindVideo();document.fonts.ready.then(resizeMark);
+  return {getSelections:()=>queue.length?queue.map(x=>({...x})):[{start:selected}],setBusy(value){busy=value;if(value){clearTimeout(seekTimer);seekTimer=null;requestedSeek=null;playing=false;video?.pause();}render();},refresh:render};
 }
+
 
 

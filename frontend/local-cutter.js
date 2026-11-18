@@ -1,3 +1,4 @@
+import {renderVideoFrames,originalEncodingProfile,captureHealth} from './video-frames.js';
 import {drawWatermark} from './watermark.js';
 import {zipSync} from 'fflate';
 
@@ -15,7 +16,7 @@ export function planSegments(total,{mode,count,clipDuration,start,end,duration,s
     error.resetRange=true;throw error;
   }
   const length=Number(mode==='single'?duration:clipDuration);
-  if(!Number.isFinite(length)||length<=0)throw Error('A duração está vazia ou inválida. No modo automático, escolha 30, 45 ou 60 segundos em “Duração de cada clipe automático”. No modo manual, escolha em “Duração fixa do corte”, abaixo da prévia.');
+  if(!Number.isFinite(length)||length<=0)throw Error('A duração está vazia ou inválida. No modo automático, escolha de 30 segundos até 2 minutos em “Duração de cada clipe automático”. No modo manual, escolha em “Duração fixa do corte”, abaixo da prévia.');
   if(mode==='single'&&selections?.length) {
     if(selections.length>10)throw Error('Selecione no máximo 10 trechos por vez.');
     return selections.map((item,index)=>{
@@ -28,7 +29,7 @@ export function planSegments(total,{mode,count,clipDuration,start,end,duration,s
   if(!Number.isInteger(limit)||limit<1||limit>10)throw Error('Escolha de 1 a 10 clipes.');
   if(limit*length>last-first+1e-6){
     const available=last-first,capacity=Math.floor(available/length);
-    const alternatives=[30,45,60].filter(seconds=>limit*seconds<=available+1e-6);
+    const alternatives=[30,45,60,90,105,120].filter(seconds=>limit*seconds<=available+1e-6);
     throw Error('Você pediu '+limit+' clipe(s) de '+length+'s: são necessários '+(limit*length)+'s.\nO intervalo escolhido vai de '+first.toFixed(1)+'s até '+last.toFixed(1)+'s, tem '+available.toFixed(1)+'s úteis e comporta '+capacity+' clipe(s) de '+length+'s.\nComo corrigir:\n'+(capacity>0?'• Em “Quantidade de clipes”, escolha '+capacity+' ou menos, mantendo '+length+' segundos.':'• Este intervalo não comporta nem 1 clipe de '+length+'s. Escolha uma duração menor ou um vídeo mais longo.')+'\n'+(alternatives.length?'• Para manter '+limit+' clipe(s), em “Duração de cada clipe automático”, escolha '+alternatives.join(' ou ')+' segundos.':'• Para manter essa quantidade e duração, selecione um vídeo maior ou amplie o intervalo usando “Começar em” = '+ignoredStart+' e “Terminar em” vazio. Você também pode reduzir “Ignorar no início” e “Ignorar no final”.')+'\nA duração dos cortes não será encurtada automaticamente.');
   }
   return Array.from({length:limit},(_,i)=>({start:first+i*length,length}));
@@ -45,43 +46,52 @@ function waitFor(target,event,signal,timeout=30000) {
 }
 export function recordingFormat(Recorder=globalThis.MediaRecorder) {
   if(!Recorder) throw Error('Este navegador não oferece gravação local. Abra no Chrome, Edge ou Safari atualizado.');
-  for(const mimeType of ['video/mp4;codecs=avc1.42E01E,mp4a.40.2','video/mp4','video/webm;codecs=vp8,opus','video/webm']) {
+  for(const mimeType of ['video/mp4','video/mp4;codecs=avc1.42E028,mp4a.40.2','video/webm;codecs=vp8,opus','video/webm']) {
     if(Recorder.isTypeSupported(mimeType)) return {mimeType,extension:mimeType.startsWith('video/mp4')?'mp4':'webm'};
   }
   throw Error('Nenhum formato de exportação local é compatível com este navegador.');
 }
-async function recordSegment(video,canvas,stream,segment,format,status,index,total,signal,watermarkText) {
-  if(signal.aborted) throw signal.reason;
-  video.pause();
-  if(Math.abs(video.currentTime-segment.start)>.001) {
-    const seek=waitFor(video,'seeked',signal);
-    video.currentTime=segment.start;
-    await seek;
-  }
-  const ctx=canvas.getContext('2d',{alpha:false});
-  ctx.drawImage(video,0,0,canvas.width,canvas.height);drawWatermark(ctx,canvas.width,canvas.height,watermarkText,video.currentTime);
-  const recorder=new MediaRecorder(stream,{mimeType:format.mimeType,videoBitsPerSecond:5000000,audioBitsPerSecond:128000});
-  const chunks=[];
+export function validateEncodedResolution(blob,width,height,signal) {
   return new Promise((resolve,reject)=>{
-    let timer,watchdog,frame,lastProgress=0,settled=false,failure;
-    const cleanup=()=>{clearInterval(timer);clearTimeout(watchdog);cancelAnimationFrame(frame);video.pause();video.removeEventListener('ended',stop);video.removeEventListener('error',bad);signal.removeEventListener('abort',abort);};
+    const probe=document.createElement('video'),url=URL.createObjectURL(blob);
+    let finished=false;
+    const done=error=>{if(finished)return;finished=true;clearTimeout(timer);probe.removeAttribute('src');probe.load();URL.revokeObjectURL(url);signal?.removeEventListener('abort',abort);error?reject(error):resolve();};
+    const abort=()=>done(new DOMException('Corte cancelado.','AbortError'));
+    const timer=setTimeout(()=>done(Error('Não consegui conferir o arquivo exportado. Tente gerar novamente; ele não será enviado como concluído sem essa conferência.')),20000);
+    probe.preload='metadata';probe.onloadedmetadata=()=>done(probe.videoWidth===width&&probe.videoHeight===height?null:Error('A exportação retornou '+probe.videoWidth+' × '+probe.videoHeight+', mas a entrada é '+width+' × '+height+'. O corte foi recusado para preservar a resolução original.'));
+    probe.onerror=()=>done(Error('O navegador gerou um arquivo que não pôde ser aberto. Tente novamente; nenhum vídeo corrompido será enviado à conta.'));
+    signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted){abort();return;}probe.src=url;
+  });
+}
+async function recordSegment(video,canvas,stream,segment,format,status,index,total,signal,watermarkText,profile,requestFrame) {
+  if(signal.aborted)throw signal.reason;
+  video.pause();
+  if(Math.abs(video.currentTime-segment.start)>.001){const seek=waitFor(video,'seeked',signal);video.currentTime=segment.start;await seek;}
+  if(video.readyState<3)await waitFor(video,'canplay',signal);
+  const ctx=canvas.getContext('2d',{alpha:false});
+  const recorder=new MediaRecorder(stream,{mimeType:format.mimeType,videoBitsPerSecond:profile.videoBitsPerSecond,audioBitsPerSecond:profile.audioBitsPerSecond});
+  const chunks=[],health=captureHealth(segment.start,segment.length);
+  return new Promise((resolve,reject)=>{
+    let timer,watchdog,stopDrawing=()=>{},lastProgress=0,settled=false,stopping=false,buffering=false,failure;
+    const cleanup=()=>{clearInterval(timer);clearTimeout(watchdog);stopDrawing();video.pause();for(const [event,callback] of [['ended',stop],['error',bad],['waiting',waiting],['playing',playing]])video.removeEventListener(event,callback);signal.removeEventListener('abort',abort);};
     const finish=(error,blob)=>{if(settled)return;settled=true;cleanup();error?reject(error):resolve(blob);};
-    const stop=()=>{video.pause();if(recorder.state!=='inactive')recorder.stop();};
-    const fail=e=>{failure=e;stop();finish(e);};
+    const stop=()=>{if(stopping)return;stopping=true;stopDrawing();video.pause();if(recorder.state!=='inactive')recorder.stop();};
+    const fail=error=>{failure=error;stop();finish(error);};
     const abort=()=>fail(new DOMException('Corte cancelado.','AbortError'));
-    const bad=()=>fail(Error('Falha ao ler o vídeo durante o corte.'));
+    const bad=()=>fail(Error('O vídeo original falhou durante a decodificação. Verifique se esse mesmo trecho toca normalmente fora do site.'));
+    const waiting=()=>{if(video.readyState>=3)return;buffering=true;if(recorder.state==='recording')recorder.pause();};
+    const playing=()=>{buffering=false;if(recorder.state==='paused')recorder.resume();};
+    const draw=time=>{if(settled||stopping)return;try{if(time>=segment.start+segment.length){stop();return;}ctx.drawImage(video,0,0,canvas.width,canvas.height);drawWatermark(ctx,canvas.width,canvas.height,watermarkText,time);requestFrame();health.frame(time);}catch(error){fail(error);}};
+    recorder.onpause=()=>{if(!buffering&&!stopping&&recorder.state==='paused')recorder.resume();};
+    recorder.onresume=()=>{if(buffering&&!stopping&&recorder.state==='recording')recorder.pause();};
     recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
-    recorder.onerror=e=>fail(e.error||Error('Falha na gravação local.'));
-    recorder.onstop=()=>{const blob=new Blob(chunks,{type:recorder.mimeType});finish(failure||(!blob.size?Error('O navegador gerou um clipe vazio.'):null),blob);};
-    const draw=()=>{if(settled||recorder.state==='inactive')return;ctx.drawImage(video,0,0,canvas.width,canvas.height);drawWatermark(ctx,canvas.width,canvas.height,watermarkText,video.currentTime);frame=requestAnimationFrame(draw);};
-    video.addEventListener('ended',stop);video.addEventListener('error',bad);signal.addEventListener('abort',abort,{once:true});
-    timer=setInterval(()=>{
-      const elapsed=Math.max(0,video.currentTime-segment.start);
-      if(Date.now()-lastProgress>500){status('Clipe '+(index+1)+' de '+total+' · '+Math.min(100,Math.floor(elapsed/segment.length*100))+'% · mantenha esta aba visível');lastProgress=Date.now();}
-      if(video.currentTime>=segment.start+segment.length-.025||video.ended)stop();
-    },25);
-    watchdog=setTimeout(()=>fail(Error('A reprodução travou. Deixe esta aba do ViralClip aberta e visível, evite suspender o computador e clique em “Gerar clipes” novamente. Para testar, escolha 1 clipe de 30 segundos.')),(segment.length*2+30)*1000);
-    try{recorder.start(1000);draw();video.play().catch(fail);}catch(e){fail(e);}
+    recorder.onerror=e=>fail(e.error||Error('O codificador do navegador falhou. Feche outros vídeos e tente novamente mantendo a resolução original.'));
+    recorder.onstop=()=>{try{if(failure)throw failure;health.check();const blob=new Blob(chunks,{type:recorder.mimeType});if(!blob.size)throw Error('O navegador gerou um arquivo vazio. Tente novamente.');finish(null,blob);}catch(error){finish(error);}};
+    for(const [event,callback] of [['ended',stop],['error',bad],['waiting',waiting],['playing',playing]])video.addEventListener(event,callback);
+    signal.addEventListener('abort',abort,{once:true});
+    timer=setInterval(()=>{const elapsed=Math.max(0,video.currentTime-segment.start);if(Date.now()-lastProgress>500){status('Clipe '+(index+1)+' de '+total+' · '+Math.min(100,Math.floor(elapsed/segment.length*100))+'% · '+profile.width+' × '+profile.height+' original'+(buffering?' · aguardando decodificação...':' · mantenha esta aba visível'));lastProgress=Date.now();}if(video.currentTime>=segment.start+segment.length-.01||video.ended)stop();},25);
+    watchdog=setTimeout(()=>fail(Error('A decodificação não avançou a tempo. O corte não será salvo com congelamentos. Feche outros vídeos e programas pesados e tente 1 corte.')),(segment.length*3+30)*1000);
+    try{recorder.start(1000);draw(video.currentTime);stopDrawing=renderVideoFrames(video,draw);video.play().catch(fail);}catch(error){fail(error);}
   });
 }
 let busy=false;
@@ -101,8 +111,8 @@ export async function cutLocally(file,options,status=()=>{},signal=new AbortCont
   signal.addEventListener('abort',abort,{once:true});
   if(signal.aborted)controller.abort();
   document.addEventListener('visibilitychange',visibility);
-  video.playsInline=true;video.preload='auto';video.muted=true;
-  video.style.cssText='position:fixed;left:0;bottom:0;width:2px;height:2px;opacity:.01;pointer-events:none';
+  video.playsInline=true;video.preload='auto';video.muted=true;video.dataset.localCapture='true';
+  video.style.cssText='position:fixed;right:12px;bottom:12px;width:160px;height:90px;pointer-events:none;z-index:1000;background:black;border:1px solid #57617c;border-radius:8px';video.setAttribute('aria-label','Captura do corte em andamento');
   document.body.append(video);
   try {
     // Resume audio immediately in the initiating user action.
@@ -116,11 +126,12 @@ export async function cutLocally(file,options,status=()=>{},signal=new AbortCont
     video.src=url;video.load();await ready;
     const segments=planSegments(video.duration,options);
     const report=status;
-    // Limit recording to 1080p to avoid excessive encoder memory on mobile.
-    const scale=Math.min(1,1080/Math.max(video.videoWidth,video.videoHeight));
-    canvas.width=Math.max(2,Math.round(video.videoWidth*scale/2)*2);
-    canvas.height=Math.max(2,Math.round(video.videoHeight*scale/2)*2);
-    stream=canvas.captureStream(30);
+    const profile=originalEncodingProfile(video.videoWidth,video.videoHeight,file.size,video.duration);
+    canvas.width=profile.width;canvas.height=profile.height;
+    // Submit a frame only after a new source frame has been decoded.
+    stream=canvas.captureStream(0);
+    let track=stream.getVideoTracks()[0],requestFrame=()=>track.requestFrame();
+    if(typeof track.requestFrame!=='function'){stream.getTracks().forEach(t=>t.stop());stream=canvas.captureStream(60);track=stream.getVideoTracks()[0];requestFrame=()=>{};}
     source=audio.createMediaElementSource(video);
     const destination=audio.createMediaStreamDestination();
     source.connect(destination);
@@ -130,10 +141,13 @@ export async function cutLocally(file,options,status=()=>{},signal=new AbortCont
     const files=[];
     for(let i=0;i<segments.length;i++) {
       report('Preparando clipe '+(i+1)+' de '+segments.length+'...');
-      const blob=await recordSegment(video,canvas,stream,segments[i],format,report,i,segments.length,controller.signal,options.watermark?options.brand:'');
+      const blob=await recordSegment(video,canvas,stream,segments[i],format,report,i,segments.length,controller.signal,options.watermark?options.brand:'',profile,requestFrame);
+      report('Conferindo resolução original do clipe '+(i+1)+'...');
+      await validateEncodedResolution(blob,profile.width,profile.height,controller.signal);
       files.push({name:'viralclip_'+String(i+1).padStart(2,'0')+'.'+format.extension,blob,type:blob.type});
     }
     if(options.mode==='single'&&files.length===1)return {blob:files[0].blob,files,zip:false,extension:format.extension,notice:''};
+    if(files.reduce((sum,file)=>sum+file.blob.size,0)>64*1024*1024)return {blob:null,files,zip:false,extension:format.extension,notice:'Cortes de alta qualidade disponíveis individualmente. ZIP automático omitido para evitar sobrecarga de memória.'};
     status('Montando ZIP local...');
     const entries={};
     for(const item of files)entries[item.name]=new Uint8Array(await item.blob.arrayBuffer());
@@ -150,6 +164,7 @@ export async function cutLocally(file,options,status=()=>{},signal=new AbortCont
     URL.revokeObjectURL(url);signal.removeEventListener('abort',abort);document.removeEventListener('visibilitychange',visibility);busy=false;
   }
 }
+
 
 
 

@@ -41,3 +41,19 @@ test('negative or excessive ignored seconds are rejected clearly',()=>{for(const
 test('90 second video with 70 useful seconds enables 30 second selection',()=>{assert.equal(timelineBounds(90,30,10,10).valid,true);assert.equal(timelineBounds(90,30,10,10).max,50);});
 test('an additional end constraint explains the real available interval',()=>{const range=timelineBounds(90,30,10,10,'0');assert.equal(range.valid,false);assert.equal(range.useful,0);});
 test('timeline supports zero margins and custom margins consistently with exporter',()=>{assert.deepEqual(timelineBounds(90,30,0,0),{min:0,last:90,max:60,useful:90,valid:true});assert.deepEqual(timelineBounds(90,30,5,3),{min:5,last:87,max:57,useful:82,valid:true});});
+
+
+import {renderVideoFrames,originalEncodingProfile,captureHealth} from './video-frames.js';
+test('Full HD and 4K source dimensions are never downscaled by export profile',()=>{for(const [width,height] of [[1920,1080],[1080,1920],[3840,2160]]){const profile=originalEncodingProfile(width,height,50000000,60);assert.equal(profile.width,width);assert.equal(profile.height,height);assert.ok(profile.videoBitsPerSecond>=width*height*6);}});
+test('capture follows new decoded frames and skips repeated source images',()=>{let callback,id=0,canceled=0;const frames=[];const video={paused:false,currentTime:0,requestVideoFrameCallback:fn=>{callback=fn;return ++id;},cancelVideoFrameCallback:()=>canceled++};const stop=renderVideoFrames(video,time=>frames.push(time));for(const time of [0,0,1/60,2/60,2/60,3/60])callback(0,{mediaTime:time});stop();assert.deepEqual(frames,[0,1/60,2/60,3/60]);assert.equal(canceled,1);});
+test('fallback renderer does not duplicate the same media time on screen refresh',()=>{let callback;const frames=[];const video={paused:false,currentTime:1};const stop=renderVideoFrames(video,time=>frames.push(time),{raf:fn=>{callback=fn;return 1;},caf:()=>{}});callback();callback();video.currentTime=1.04;callback();stop();assert.deepEqual(frames,[1,1.04]);});
+test('capture monitor accepts continuous frames and rejects visible frame gaps',()=>{const good=captureHealth(0,2);for(let time=0;time<2;time+=1/30)good.frame(time);assert.ok(good.check().maxGap<.04);const bad=captureHealth(0,2);bad.frame(0);bad.frame(.8);assert.throws(()=>bad.check(),/perdeu quadros/);});
+test('90, 105 and 120 second manual durations are preserved',()=>{for(const duration of [90,105,120])assert.deepEqual(planSegments(180,{mode:'single',start:10,duration}),[{start:10,length:duration}]);});
+
+import {validateEncodedResolution} from './local-cutter.js';
+test('export verification accepts Full HD and rejects silent resolution reduction',async()=>{
+  const previous=globalThis.document;
+  let dimensions=[1920,1080];
+  globalThis.document={createElement:()=>({videoWidth:dimensions[0],videoHeight:dimensions[1],removeAttribute(){},load(){},set src(value){queueMicrotask(()=>this.onloadedmetadata());}})};
+  try{await validateEncodedResolution(new Blob(['mp4']),1920,1080);dimensions=[1280,720];await assert.rejects(validateEncodedResolution(new Blob(['mp4']),1920,1080),/recusado/);}finally{globalThis.document=previous;}
+});

@@ -50,3 +50,21 @@ test('canceling native share leaves clip prepared for retry',async()=>{
   attachClipSharing({button,info,name:'clip.mp4',nav:{canShare:()=>true,share:async()=>{attempts++;throw new DOMException('Canceled','AbortError');}},getBlob:async()=>new Blob(['video'])});
   await button.onclick();await button.onclick();assert.match(info.textContent,/cancelado/);assert.equal(button.disabled,false);await button.onclick();assert.equal(attempts,2);
 });
+
+
+import {saveClipParts,downloadClip,removeClip,validateManifest} from './clip-transfer.js';
+test('large clips round-trip as identical bytes without recompression and delete all parts',async()=>{
+  const storage=new Map(),bytes=new Uint8Array([1,2,3,4,5,6,7,8,9,10]);
+  const blob=new Blob([bytes],{type:'video/mp4'}),path=uid+'/test.mp4';
+  const store={download:async path=>({data:storage.get(path),error:null}),remove:async paths=>{paths.forEach(path=>storage.delete(path));return {error:null};}};
+  const saved=await saveClipParts({blob,path,singleLimit:5,partSize:4,upload:async(path,part)=>storage.set(path,part),remove:paths=>store.remove(paths)});
+  assert.equal(saved,path+'.clip.json');assert.equal(storage.size,4);
+  const result=await downloadClip(store,saved);assert.equal(result.type,'video/mp4');assert.deepEqual(new Uint8Array(await result.arrayBuffer()),bytes);
+  await removeClip(store,saved);assert.equal(storage.size,0);
+});
+test('failed multipart upload never publishes a manifest and cleans completed parts',async()=>{
+  const storage=new Map();let count=0;
+  await assert.rejects(saveClipParts({blob:new Blob(['1234567890'],{type:'video/mp4'}),path:uid+'/test.mp4',singleLimit:5,partSize:4,upload:async(path,blob)=>{if(++count===2)throw Error('Network');storage.set(path,blob);},remove:async paths=>paths.forEach(path=>storage.delete(path))}));
+  assert.equal(storage.size,0);
+});
+test('manifest cannot refer to another account folder',()=>assert.throws(()=>validateManifest({version:1,type:'video/mp4',bytes:4,parts:[{path:'other/_parts/part',size:4}]},uid+'/test.mp4.clip.json')));
