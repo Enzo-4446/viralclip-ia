@@ -17,7 +17,8 @@ export function mountAdminPanel({sb,root}){
  if(!root||!sb?.rpc)throw new TypeError('Painel ADM indisponível.');
  root.hidden=true;
  let epoch=0,authorized=false,busy=false;
- const heading=make('h3','Administração · VIRAL IA');
+ const heading=make('h3','Enzo Salmazo · Painel ADM');
+ const unlimited=make('p','∞  Créditos ilimitados · Acesso administrativo','muted');
  const note=make('p','Ajustes são registrados e auditados no banco. Nunca informe chaves secretas aqui.','muted');
  const status=make('p','','muted');status.setAttribute('role','status');status.setAttribute('aria-live','polite');
  const refreshButton=make('button','Atualizar dados');refreshButton.type='button';
@@ -31,7 +32,7 @@ export function mountAdminPanel({sb,root}){
  const submit=make('button','Registrar ajuste financeiro');submit.type='submit';
  form.append(make('h4','Ajuste auditado de saldo'),user,paid,bonus,reason,submit);
  const section=(title,content)=>{const wrap=make('section');wrap.append(make('h4',title),content);return wrap;};
- root.append(heading,note,refreshButton,status,form,section('Usuários',usersArea),section('Carteiras',walletArea),section('Reservas',reservationArea),section('Extrato',ledgerArea),section('Auditoria administrativa',auditArea));
+ root.append(heading,unlimited,note,refreshButton,status,form,section('Usuários',usersArea),section('Carteiras',walletArea),section('Reservas',reservationArea),section('Extrato',ledgerArea),section('Auditoria administrativa',auditArea));
  const cents=value=>{const n=Number(value);if(!Number.isFinite(n)||!Number.isSafeInteger(Math.round(n*100))||Math.abs(n)>1000)throw Error('Valor fora do limite de R$ 1.000,00 por ajuste.');return Math.round(n*100);};
  async function refresh(){
   if(!authorized)return;
