@@ -3,6 +3,7 @@ import {createTemporaryClips} from './temporary-clips.js';
 import {friendlyError} from './friendly-errors.js';
 import {mountWalletPanel} from './wallet-panel.js';
 import {mountAdminPanel} from './admin-panel.js';
+import {mountStore} from './store-panel.js';
 import {mountVersionNotice} from './app-version.js';
 import {createClipVault} from './clip-vault.js';
 import '@fontsource-variable/manrope';
@@ -17,11 +18,12 @@ const authRedirectUrl='https://enzo-4446.github.io/viralclip-ia/';
 const $=id=>document.getElementById(id);
 let watermarkPreference=null;
 const adminPanel=mountAdminPanel({sb,root:$('adminPanel')});
+const store=mountStore({root:$('storePanel'),openButton:$('storeOpen'),closeButton:$('storeClose')});
 const commercialWallet=mountWalletPanel({sb,root:$('commercialWallet'),enabled:true});
 const vault=createClipVault({sb,url:env.VITE_SUPABASE_URL||'https://zltpldhnaqiqkoqdiugp.supabase.co',root:$('savedClips'),message:$('savedClipsStatus'),refreshButton:$('refreshSavedClips'),pendingRoot:$('pendingClips')});
 window.addEventListener('error',e=>{const s=$('authStatus');if(s)s.textContent='Erro de inicialização: '+e.message});
 window.addEventListener('unhandledrejection',e=>{const s=$('authStatus');if(s)s.textContent='Falha de conexão: '+(e.reason?.message||String(e.reason))});
-async function refresh(){const {data:{session}}=await sb.auth.getSession();$('auth').hidden=!!session;$('app').hidden=!session;if(session){await watermarkPreference?.restore(session);await loadProjects();await vault.load();await commercialWallet.refresh();await adminPanel.check();}else{await watermarkPreference?.restore(null);vault.clear();commercialWallet.clear();adminPanel.clear();clearResults();}}
+async function refresh(){const {data:{session}}=await sb.auth.getSession();$('auth').hidden=!!session;$('app').hidden=!session;if(session){await watermarkPreference?.restore(session);await loadProjects();await vault.load();await commercialWallet.refresh();await adminPanel.check();}else{await watermarkPreference?.restore(null);vault.clear();commercialWallet.clear();adminPanel.clear();store.clear();clearResults();}}
 async function loadProjects(){const {data,error}=await sb.from('clip_projects').select('title,created_at').order('created_at',{ascending:false}).limit(20);$('projects').textContent=error?error.message:(data?.map(x=>x.title+' — '+new Date(x.created_at).toLocaleDateString('pt-BR')).join('\n')||'Nenhum projeto ainda.');$('projects').style.whiteSpace='pre-line';}
 const bindVisibility=(buttonId,inputId)=>{$(buttonId).onclick=()=>{const input=$(inputId),show=input.type==='password';input.type=show?'text':'password';$(buttonId).textContent=show?'Ocultar':'Ver';$(buttonId).setAttribute('aria-label',show?'Ocultar senha':'Mostrar senha');$(buttonId).setAttribute('aria-pressed',String(show))}};
 bindVisibility('togglePassword','password');
