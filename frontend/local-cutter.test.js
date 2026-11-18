@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {planSegments,recordingFormat} from './local-cutter.js';
+import {planSegments} from './local-cutter.js';
 import {drawWatermark,watermarkPosition} from './watermark.js';
 test('batch excludes both ten-second margins and preserves duration',()=>assert.deepEqual(planSegments(167,{mode:'batch',count:3,clipDuration:45}),[{start:10,length:45},{start:55,length:45},{start:100,length:45}]));
 test('short range rejects count instead of shortening clips',()=>assert.throws(()=>planSegments(100,{mode:'batch',count:3,clipDuration:30}),/comporta 2/));
@@ -10,7 +10,6 @@ test('manual rejects clips crossing either protected margin',()=>{for(const star
 test('manual preserves 30,45,60 second presets',()=>{for(const duration of [30,45,60])assert.deepEqual(planSegments(167,{mode:'single',start:15,duration}),[{start:15,length:duration}]);});
 test('custom interval remains inside safe region',()=>assert.deepEqual(planSegments(167,{mode:'batch',count:2,clipDuration:30,start:25,end:85}),[{start:25,length:30},{start:55,length:30}]));
 test('invalid duration, count, range and short sources are rejected',()=>{for(const opts of [{mode:'single',start:167,duration:2},{mode:'batch',count:0,clipDuration:30},{mode:'batch',count:99,clipDuration:30},{mode:'batch',count:2,clipDuration:NaN},{mode:'single',start:10,end:9,duration:30}])assert.throws(()=>planSegments(167,opts));assert.throws(()=>planSegments(20,{mode:'single',duration:30}));});
-test('extension matches supported encoder',()=>{assert.equal(recordingFormat({isTypeSupported:t=>t==='video/webm'}).extension,'webm');assert.equal(recordingFormat({isTypeSupported:t=>t==='video/mp4'}).extension,'mp4');assert.throws(()=>recordingFormat({isTypeSupported:()=>false}));});
 test('watermark draws safe, bounded gold text and restores canvas state',()=>{const calls=[];const ctx={measureText:()=>({width:160}),save:()=>calls.push('save'),restore:()=>calls.push('restore'),createLinearGradient:()=>({addColorStop:(...x)=>calls.push(x)}),fillText:(...x)=>calls.push(x)};drawWatermark(ctx,1920,1080,'MY BRAND');assert.equal(calls[0],'save');assert.ok(calls.some(x=>Array.isArray(x)&&x[0]==='MY BRAND'&&x[1]<1920&&x[2]<1080));assert.equal(calls.at(-1),'restore');});
 
 test('moving watermark stays inside frame in portrait, square and landscape',()=>{
@@ -43,17 +42,41 @@ test('an additional end constraint explains the real available interval',()=>{co
 test('timeline supports zero margins and custom margins consistently with exporter',()=>{assert.deepEqual(timelineBounds(90,30,0,0),{min:0,last:90,max:60,useful:90,valid:true});assert.deepEqual(timelineBounds(90,30,5,3),{min:5,last:87,max:57,useful:82,valid:true});});
 
 
-import {renderVideoFrames,originalEncodingProfile,captureHealth} from './video-frames.js';
+import {renderVideoFrames,originalEncodingProfile} from './video-frames.js';
 test('Full HD and 4K source dimensions are never downscaled by export profile',()=>{for(const [width,height] of [[1920,1080],[1080,1920],[3840,2160]]){const profile=originalEncodingProfile(width,height,50000000,60);assert.equal(profile.width,width);assert.equal(profile.height,height);assert.ok(profile.videoBitsPerSecond>=width*height*6);}});
 test('capture follows new decoded frames and skips repeated source images',()=>{let callback,id=0,canceled=0;const frames=[];const video={paused:false,currentTime:0,requestVideoFrameCallback:fn=>{callback=fn;return ++id;},cancelVideoFrameCallback:()=>canceled++};const stop=renderVideoFrames(video,time=>frames.push(time));for(const time of [0,0,1/60,2/60,2/60,3/60])callback(0,{mediaTime:time});stop();assert.deepEqual(frames,[0,1/60,2/60,3/60]);assert.equal(canceled,1);});
 test('fallback renderer does not duplicate the same media time on screen refresh',()=>{let callback;const frames=[];const video={paused:false,currentTime:1};const stop=renderVideoFrames(video,time=>frames.push(time),{raf:fn=>{callback=fn;return 1;},caf:()=>{}});callback();callback();video.currentTime=1.04;callback();stop();assert.deepEqual(frames,[1,1.04]);});
-test('capture monitor accepts continuous frames and rejects visible frame gaps',()=>{const good=captureHealth(0,2);for(let time=0;time<2;time+=1/30)good.frame(time);assert.ok(good.check().maxGap<.04);const bad=captureHealth(0,2);bad.frame(0);bad.frame(.8);assert.throws(()=>bad.check(),/perdeu quadros/);});
 test('90, 105 and 120 second manual durations are preserved',()=>{for(const duration of [90,105,120])assert.deepEqual(planSegments(180,{mode:'single',start:10,duration}),[{start:10,length:duration}]);});
 
-import {validateEncodedResolution} from './local-cutter.js';
-test('export verification accepts Full HD and rejects silent resolution reduction',async()=>{
-  const previous=globalThis.document;
-  let dimensions=[1920,1080];
-  globalThis.document={createElement:()=>({videoWidth:dimensions[0],videoHeight:dimensions[1],removeAttribute(){},load(){},set src(value){queueMicrotask(()=>this.onloadedmetadata());}})};
-  try{await validateEncodedResolution(new Blob(['mp4']),1920,1080);dimensions=[1280,720];await assert.rejects(validateEncodedResolution(new Blob(['mp4']),1920,1080),/recusado/);}finally{globalThis.document=previous;}
+
+import {assertOfflineTimeline,createOfflineProcessor,renderOfflineClip} from './offline-cutter.js';
+test('offline verification detects missing and retimed frames, allowing encoder packet reordering',()=>{
+  const frames=[{time:0},{time:1/60},{time:2/60}];
+  assert.doesNotThrow(()=>assertOfflineTimeline(frames,[frames[2],frames[0],frames[1]]));
+  assert.throws(()=>assertOfflineTimeline(frames,frames.slice(1)),/todos os quadros/);
+  assert.throws(()=>assertOfflineTimeline(frames,[frames[0],frames[1],{time:.73}]),/tempo de um quadro/);
+});
+test('offline processing preserves original dimensions and media timestamps regardless of wall clock',()=>{
+  const frames=[],process=createOfflineProcessor({width:1920,height:1080,watermark:false,frames});
+  for(const timestamp of [0,1/60,2/60]){
+    const sample={displayWidth:1920,displayHeight:1080,timestamp,duration:1/60};
+    assert.equal(process(sample),sample);
+  }
+  assert.deepEqual(frames.map(x=>x.time),[0,1/60,2/60]);
+  assert.throws(()=>process({displayWidth:1280,displayHeight:720}),/resolução/);
+});
+test('offline watermark is painted on every original-sized decoded frame',()=>{
+  const frames=[],draws=[],canvas={width:1920,height:1080};
+  const ctx={canvas,save(){},restore(){},measureText:()=>({width:180}),createLinearGradient:()=>({addColorStop(){}}),fillText:(...args)=>draws.push(args)};
+  canvas.getContext=()=>ctx;
+  const process=createOfflineProcessor({width:1920,height:1080,watermark:true,brand:'@GTA.VI.RAL',frames,createCanvas:()=>canvas});
+  for(const timestamp of [0,1])assert.equal(process({displayWidth:1920,displayHeight:1080,timestamp,duration:1/60,draw:(context,x,y,w,h)=>assert.deepEqual([context,x,y,w,h],[ctx,0,0,1920,1080])}),canvas);
+  assert.equal(draws.length,2);assert.equal(draws[0][0],'@GTA.VI.RAL');assert.notDeepEqual(draws[0],draws[1]);
+});
+test('offline export refuses silently discarded audio and releases conversion',async()=>{
+  let canceled=false;
+  class Target{};class Format{};class Output{constructor(options){this.options=options;}}
+  const Conversion={init:async()=>({isValid:true,state:'pending',discardedTracks:[{track:{type:'audio'}}],cancel:async()=>{canceled=true;}})};
+  await assert.rejects(renderOfflineClip({width:1920,height:1080,duration:10,input:{}},{size:1000},{start:0,length:2},{},()=>{},undefined,{ConversionClass:Conversion,OutputClass:Output,TargetClass:Target,FormatClass:Format}),/áudio/);
+  assert.equal(canceled,true);
 });

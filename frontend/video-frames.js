@@ -18,7 +18,3 @@ export function originalEncodingProfile(width,height,fileBytes,duration) {
   // High-quality AVC budget; keep the source pixel dimensions without automatic downscaling.
   return {width,height,videoBitsPerSecond:Math.round(Math.max(width*height*6,sourceRate*1.15,2000000)),audioBitsPerSecond:256000};
 }
-export function captureHealth(start,length){
-  let last=start,frames=0,gap=0;
-  return {frame(time){if(time>=last){gap=Math.max(gap,time-last);last=time;frames++;}},check(){const worst=Math.max(gap,start+length-last);if(frames<Math.max(2,length*5)||worst>.4)throw Error('O dispositivo perdeu quadros durante a gravação (maior intervalo: '+worst.toFixed(2)+'s). Este corte não foi salvo para evitar entregar um vídeo congelado. Feche outras reproduções e programas pesados e tente 1 corte. A resolução original não será reduzida automaticamente.');return {frames,maxGap:worst};}};
-}

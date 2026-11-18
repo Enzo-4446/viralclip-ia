@@ -38,8 +38,8 @@ $('processingEngine').onchange=()=>{
   const local=localEngine();
   for(const id of ['aspect','quality','fps','crf','framing','captions','captionLanguage','captionStyle','recordVoice','voiceFile','ducking','originalVolume','duckDb','releaseMs'])$(id).disabled=local;
   $('watermark').disabled=localBusy;$('brand').disabled=localBusy||!$('watermark').checked;
-  $('settingsSummary').textContent=local?'Corte local: áudio e vídeo, resolução e quadros da fonte original, proporção original e marca dourada opcional. Você escolhe quantos segundos ignorar no início e no final. Duração fixa. MP4 ou WebM conforme o navegador.':'Edição pelo servidor selecionada.';
-  $('localNote').textContent=local?'Vídeo e áudio processados neste dispositivo. Os cortes prontos são enviados para sua conta para baixar em outros dispositivos. Exportação em tempo real, resolução original, incluindo Full HD, proporção original e marca dourada opcional. Você escolhe quantos segundos ignorar no início e no final. Duração fixa. MP4 ou WebM conforme o navegador. Mantenha esta aba visível.':'Edição avançada usa o Render e permite enquadramento vertical, marca e legendas quando configuradas.';
+  $('settingsSummary').textContent=local?'Corte local: áudio e vídeo, resolução original e corte offline quadro a quadro, proporção original e marca dourada opcional. Você escolhe quantos segundos ignorar no início e no final. Duração fixa. Saída MP4 para iPad e TikTok.':'Edição pelo servidor selecionada.';
+  $('localNote').textContent=local?'Vídeo e áudio processados neste dispositivo. Os cortes prontos são enviados para sua conta para baixar em outros dispositivos. Processamento offline quadro a quadro, resolução original, incluindo Full HD, proporção original e marca dourada opcional. Você escolhe quantos segundos ignorar no início e no final. Duração fixa. Saída MP4 para iPad e TikTok. Mantenha esta aba visível.':'Edição avançada usa o Render e permite enquadramento vertical, marca e legendas quando configuradas.';
 };
 async function generateLocal(f,title,session){
   const status=message=>$('status').textContent=message;
@@ -278,4 +278,4 @@ watermarkPreference=rememberWatermark({sb,input:$('brand'),preset:$('useGtaBrand
 
 
 
-document.addEventListener('play',event=>{if(localBusy&&event.target.tagName==='VIDEO'&&event.target.dataset.localCapture!=='true'){event.target.pause();$('status').textContent='A captura está em andamento na resolução original. Aguarde terminar para assistir aos outros vídeos e evitar disputa de decodificação.';}},true);
+document.addEventListener('play',event=>{if(localBusy&&event.target.tagName==='VIDEO'&&event.target.dataset.localCapture!=='true'){event.target.pause();$('status').textContent='O corte offline está em andamento na resolução original. Aguarde terminar para assistir aos outros vídeos e evitar disputa de decodificação.';}},true);
