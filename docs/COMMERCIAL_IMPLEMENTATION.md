@@ -24,3 +24,11 @@ Migrar resultados para IndexedDB/OPFS local com expires_at=created_at+30 minutos
 
 ## Transferência para comprador
 Exportar repositório e histórico, migrações SQL, Edge Functions, configurações de ambiente (sem valores secretos), inventário de licenças, domínio, DNS, hospedagem, backups e runbook. Migrar dados pessoais com base legal e autorização adequada. Comprador cria suas próprias credenciais Mercado Pago, Google OAuth, Supabase e hospedagem. Validar restauração e revogar acessos anteriores. Não transferir senhas ou tokens pessoais.
+
+## Iteração 3 — 2026-11-18
+- Upload automático de resultados removido dos caminhos de geração local e remoto no frontend. O caminho remoto ainda envia a **fonte** ao Render quando escolhido; a importação de YouTube também depende de serviços externos. Não anunciar processamento totalmente local.
+- URLs temporárias dos resultados são rastreadas e revogadas depois de 30 minutos enquanto a página está ativa, com verificação ao retornar à aba. Isto **não** elimina vídeos antigos do Supabase Storage, nem garante limpeza com navegador fechado; dados locais de origem continuam sob controle do usuário.
+- Gravação de voz oculta na interface, mas código legado ainda exige refatoração.
+- GitHub Pages alterado para publicação somente por workflow_dispatch; novo workflow validate.yml executa testes e build em push sem publicação.
+- Migração para Google Drive por usuário, carteiras e pagamentos ainda não implementados. Não ativar créditos antes de RLS, transações e testes de pagamento.
+- Confirmar resultado do GitHub Actions antes de executar manualmente deploy; backup original permanece disponível.
