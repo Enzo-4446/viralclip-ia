@@ -17,7 +17,7 @@ const authRedirectUrl='https://enzo-4446.github.io/viralclip-ia/';
 const $=id=>document.getElementById(id);
 let watermarkPreference=null;
 const adminPanel=mountAdminPanel({sb,root:$('adminPanel')});
-const commercialWallet=mountWalletPanel({sb,root:$('commercialWallet'),enabled:env.VITE_COMMERCIAL_WALLET_ENABLED==='true'});
+const commercialWallet=mountWalletPanel({sb,root:$('commercialWallet'),enabled:true});
 const vault=createClipVault({sb,url:env.VITE_SUPABASE_URL||'https://zltpldhnaqiqkoqdiugp.supabase.co',root:$('savedClips'),message:$('savedClipsStatus'),refreshButton:$('refreshSavedClips'),pendingRoot:$('pendingClips')});
 window.addEventListener('error',e=>{const s=$('authStatus');if(s)s.textContent='Erro de inicialização: '+e.message});
 window.addEventListener('unhandledrejection',e=>{const s=$('authStatus');if(s)s.textContent='Falha de conexão: '+(e.reason?.message||String(e.reason))});
