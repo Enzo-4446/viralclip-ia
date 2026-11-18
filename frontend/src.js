@@ -38,8 +38,8 @@ $('processingEngine').onchange=()=>{
   const local=localEngine();
   for(const id of ['aspect','quality','fps','crf','framing','captions','captionLanguage','captionStyle','recordVoice','voiceFile','ducking','originalVolume','duckDb','releaseMs'])$(id).disabled=local;
   $('watermark').disabled=localBusy;$('brand').disabled=localBusy||!$('watermark').checked;
-  $('settingsSummary').textContent=local?'Corte local: áudio e vídeo, até 1080p e 30 FPS, proporção original e marca dourada opcional. Primeiros e últimos 10s ignorados. Duração fixa. MP4 ou WebM conforme o navegador.':'Edição pelo servidor selecionada.';
-  $('localNote').textContent=local?'Vídeo e áudio processados neste dispositivo. Os cortes prontos são enviados para sua conta para baixar em outros dispositivos. Exportação em tempo real, até 1080p/30 FPS, proporção original e marca dourada opcional. Primeiros e últimos 10s ignorados. Duração fixa. MP4 ou WebM conforme o navegador. Mantenha esta aba visível.':'Edição avançada usa o Render e permite enquadramento vertical, marca e legendas quando configuradas.';
+  $('settingsSummary').textContent=local?'Corte local: áudio e vídeo, até 1080p e 30 FPS, proporção original e marca dourada opcional. Você escolhe quantos segundos ignorar no início e no final. Duração fixa. MP4 ou WebM conforme o navegador.':'Edição pelo servidor selecionada.';
+  $('localNote').textContent=local?'Vídeo e áudio processados neste dispositivo. Os cortes prontos são enviados para sua conta para baixar em outros dispositivos. Exportação em tempo real, até 1080p/30 FPS, proporção original e marca dourada opcional. Você escolhe quantos segundos ignorar no início e no final. Duração fixa. MP4 ou WebM conforme o navegador. Mantenha esta aba visível.':'Edição avançada usa o Render e permite enquadramento vertical, marca e legendas quando configuradas.';
 };
 async function generateLocal(f,title,session){
   const status=message=>$('status').textContent=message;
@@ -51,7 +51,7 @@ async function generateLocal(f,title,session){
   $('cancelLocal').hidden=false;
   updateGenerateState();
   try{
-    const result=await cutLocally(f,{mode:$('mode').value,count:Number($('count').value),clipDuration:Number($('clipDuration').value),watermark:$('watermark').checked,brand:$('brand').value.trim(),selections,start:$('mode').value==='single'?10:Number($('start').value),end:$('end').value===''?null:Number($('end').value),duration:Number($('duration').value)},status,localController.signal);
+    const result=await cutLocally(f,{mode:$('mode').value,count:Number($('count').value),clipDuration:Number($('clipDuration').value),watermark:$('watermark').checked,brand:$('brand').value.trim(),selections,trimStart:Number($('trimStart').value),trimEnd:Number($('trimEnd').value),start:$('mode').value==='single'?Number($('trimStart').value):$('start').value,end:$('end').value===''?null:Number($('end').value),duration:Number($('duration').value)},status,localController.signal);
     clearResults();
     for(const item of result.files){
       const blob=item.blob;
@@ -135,7 +135,7 @@ $('watermark').addEventListener('change',()=>{$('brand').disabled=!$('watermark'
 $('count').addEventListener('change',updateEditor);$('clipDuration').addEventListener('change',updateEditor);$('aspect').addEventListener('change',updateEditor);
 const oldModeChange=$('mode').onchange;$('mode').onchange=()=>{oldModeChange();$('count').disabled=$('mode').value==='single';$('clipDuration').disabled=$('mode').value==='single';clearResults()};$('mode').onchange();
 
-const updateGenerateState=()=>{$('signout').disabled=localBusy;for(const id of ['file','processingEngine','tabYoutube','tabUpload','mode','count','clipDuration','start','end','duration','watermark','brand','useGtaBrand'])$(id).disabled=localBusy;$('brand').disabled=localBusy||!$('watermark').checked;const yt=sourceMode==='youtube';$('manualFields').hidden=yt||$('mode').value!=='single';$('rangeFields').hidden=yt||(!localEngine()&&$('mode').value==='batch');$('endField').hidden=!localEngine();const ready=yt?Boolean(youtubeId($('youtubeUrl').value.trim())&&$('rights').checked):Boolean($('file').files[0]||importedYoutubeFile);$('generate').disabled=localBusy||!ready;$('generate').title=ready?'Gerar vídeos com as configurações escolhidas':yt?'Informe um link e confirme os direitos de edição':'Selecione um vídeo';$('generate').textContent=yt?'Gerar clipes':$('mode').value==='batch'?'Gerar clipes':'Cortar seleção manual';$('mode').disabled=localBusy||yt;$('recordVoice').disabled=yt||localBusy||localEngine();$('voiceFile').disabled=yt||localBusy||localEngine();$('count').disabled=localBusy||!yt&&$('mode').value==='single';$('clipDuration').disabled=localBusy||!yt&&$('mode').value==='single';};
+const updateGenerateState=()=>{$('signout').disabled=localBusy;for(const id of ['file','processingEngine','tabYoutube','tabUpload','mode','count','clipDuration','start','end','trimStart','trimEnd','duration','watermark','brand','useGtaBrand'])$(id).disabled=localBusy;$('brand').disabled=localBusy||!$('watermark').checked;const yt=sourceMode==='youtube';$('manualFields').hidden=yt||$('mode').value!=='single';$('rangeFields').hidden=yt||(!localEngine()&&$('mode').value==='batch');$('endField').hidden=!localEngine();$('trimFields').hidden=!localEngine();const ready=yt?Boolean(youtubeId($('youtubeUrl').value.trim())&&$('rights').checked):Boolean($('file').files[0]||importedYoutubeFile);$('generate').disabled=localBusy||!ready;$('generate').title=ready?'Gerar vídeos com as configurações escolhidas':yt?'Informe um link e confirme os direitos de edição':'Selecione um vídeo';$('generate').textContent=yt?'Gerar clipes':$('mode').value==='batch'?'Gerar clipes':'Cortar seleção manual';$('mode').disabled=localBusy||yt;$('recordVoice').disabled=yt||localBusy||localEngine();$('voiceFile').disabled=yt||localBusy||localEngine();$('count').disabled=localBusy||!yt&&$('mode').value==='single';$('clipDuration').disabled=localBusy||!yt&&$('mode').value==='single';};
 $('youtubeUrl').addEventListener('input',updateGenerateState);$('rights').addEventListener('change',updateGenerateState);$('file').addEventListener('change',updateGenerateState);$('mode').addEventListener('change',updateGenerateState);updateGenerateState();
 
 
@@ -241,7 +241,7 @@ setSourceMode('upload');$('processingEngine').onchange();
 $('processingEngine').addEventListener('change',updateGenerateState);
 
 
-manualTimeline=mountTimeline({preview:$('videoPreview'),root:$('manualTimeline'),mode:$('mode'),duration:$('duration'),start:$('start'),end:$('end'),watermark:$('watermark'),brand:$('brand'),engine:$('processingEngine'),generate:$('generate')});
+manualTimeline=mountTimeline({preview:$('videoPreview'),root:$('manualTimeline'),mode:$('mode'),duration:$('duration'),start:$('start'),end:$('end'),watermark:$('watermark'),brand:$('brand'),engine:$('processingEngine'),generate:$('generate'),trimStart:$('trimStart'),trimEnd:$('trimEnd')});
 
 
 $('uploadSavedClips').onchange=async()=>{const files=Array.from($('uploadSavedClips').files);if(!files.length)return;const {data:{session}}=await sb.auth.getSession();if(!session){$('savedClipsStatus').textContent='Entre na sua conta para enviar os cortes.';return;}const button=$('uploadSavedClips');button.disabled=true;try{await vault.saveFiles(files.map(blob=>({name:blob.name,blob})),'Corte importado',session.user.id);}finally{button.disabled=false;button.value='';}};
@@ -251,24 +251,25 @@ function updateClipGuidance(){
   note.hidden=sourceMode!=='upload'||!localEngine();
   if(note.hidden)return;
   if(!video||!Number.isFinite(video.duration)){note.textContent='1. Clique em “Enviar vídeo” e selecione o arquivo.\n2. Aguarde a prévia carregar.\n3. Escolha o modo, a duração e a quantidade; aqui aparecerá o que cabe no seu vídeo.';return;}
-  const total=video.duration,usable=Math.max(0,total-20);
-  const header='Seu vídeo: '+total.toFixed(1)+'s. Ignorando 10s do início e 10s do final, sobram '+usable.toFixed(1)+'s.\n';
+  const total=video.duration,ignoredStart=Number($('trimStart').value),ignoredEnd=Number($('trimEnd').value),usable=Math.max(0,total-ignoredStart-ignoredEnd);
+  const header='Seu vídeo: '+total.toFixed(1)+'s. Ignorando '+ignoredStart+'s do início e '+ignoredEnd+'s do final, sobram '+usable.toFixed(1)+'s.\n';
   try{
-    const options={mode:$('mode').value,count:Number($('count').value),clipDuration:Number($('clipDuration').value),start:$('mode').value==='single'?10:$('start').value,end:$('end').value,duration:Number($('duration').value),selections:$('mode').value==='single'?manualTimeline?.getSelections():undefined};
+    const options={mode:$('mode').value,count:Number($('count').value),clipDuration:Number($('clipDuration').value),trimStart:ignoredStart,trimEnd:ignoredEnd,start:$('mode').value==='single'?ignoredStart:$('start').value,end:$('end').value,duration:Number($('duration').value),selections:$('mode').value==='single'?manualTimeline?.getSelections():undefined};
     const parts=planSegments(total,options);
     $('resetClipRange').hidden=true;note.classList.remove('needs-correction');note.textContent=header+'Configuração pronta: '+parts.length+' clipe(s) de '+parts[0].length+'s. O primeiro vai de '+parts[0].start.toFixed(1)+'s até '+(parts[0].start+parts[0].length).toFixed(1)+'s.\n'+($('mode').value==='single'?'Arraste a seleção abaixo da prévia e clique em “Cortar trecho”. Use “Adicionar trecho” para escolher vários.':'Confira os valores e clique em “Gerar clipes”.');
   }catch(error){$('resetClipRange').hidden=!error.resetRange;note.classList.add('needs-correction');note.textContent=header+error.message;}
 }
 let guidanceVideo=null;
-function bindClipGuidance(){const video=$('videoPreview').querySelector('video');if(video!==guidanceVideo){guidanceVideo=video;video?.addEventListener('loadedmetadata',updateClipGuidance);}updateClipGuidance();}
+function bindClipGuidance(){const video=$('videoPreview').querySelector('video');if(video!==guidanceVideo){guidanceVideo=video;video?.addEventListener('loadedmetadata',updateClipGuidance);video?.addEventListener('cliprangechange',updateClipGuidance);}updateClipGuidance();}
 new MutationObserver(bindClipGuidance).observe($('videoPreview'),{childList:true});
-for(const id of ['start','end','count','duration','clipDuration','mode','processingEngine']){ $(id).addEventListener('input',updateClipGuidance);$(id).addEventListener('change',updateClipGuidance);}
+for(const id of ['start','end','trimStart','trimEnd','count','duration','clipDuration','mode','processingEngine']){ $(id).addEventListener('input',updateClipGuidance);$(id).addEventListener('change',updateClipGuidance);}
 $('manualTimeline').addEventListener('input',()=>queueMicrotask(updateClipGuidance));
 $('manualTimeline').addEventListener('click',()=>queueMicrotask(updateClipGuidance));
 $('tabUpload').addEventListener('click',updateClipGuidance);$('tabYoutube').addEventListener('click',updateClipGuidance);
-$('resetClipRange').onclick=()=>{$('start').value='10';$('end').value='';$('start').dispatchEvent(new Event('input'));$('end').dispatchEvent(new Event('input'));$('resetClipRange').hidden=true;$('status').textContent='Intervalo corrigido: início em 10 segundos e final automático, 10 segundos antes de acabar o vídeo. Confira a quantidade e a duração no aviso acima e clique em “Gerar clipes” novamente.';updateClipGuidance();};
+$('resetClipRange').onclick=()=>{$('start').value=$('trimStart').value;$('end').value='';$('start').dispatchEvent(new Event('input'));$('end').dispatchEvent(new Event('input'));$('resetClipRange').hidden=true;$('status').textContent='Intervalo corrigido de acordo com os valores em “Ignorar no início” e “Ignorar no final”. Confira a quantidade e a duração no aviso acima e clique em “Gerar clipes” novamente.';updateClipGuidance();};
 bindClipGuidance();
 
 
 watermarkPreference=rememberWatermark({sb,input:$('brand'),preset:$('useGtaBrand'),status:$('brandSavedStatus')});
+
 

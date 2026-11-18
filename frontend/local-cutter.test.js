@@ -32,3 +32,12 @@ test('invalid interval identifies entered values and exact repair steps',()=>{
 test('insufficient footage gives achievable count and duration choices',()=>{
   assert.throws(()=>planSegments(167.7,{mode:'batch',count:3,clipDuration:60}),error=>error.message.includes('necessários 180s')&&error.message.includes('escolha 2 ou menos')&&error.message.includes('escolha 30 ou 45 segundos'));
 });
+
+
+import {timelineBounds} from './timeline.js';
+test('zero ignored seconds allows cutting from the beginning to the real end',()=>assert.deepEqual(planSegments(90,{mode:'batch',count:3,clipDuration:30,trimStart:0,trimEnd:0}),[{start:0,length:30},{start:30,length:30},{start:60,length:30}]));
+test('custom ignored seconds are applied independently',()=>assert.deepEqual(planSegments(90,{mode:'single',duration:30,trimStart:5,trimEnd:3,selections:[{start:57}]}),[{start:57,length:30}]));
+test('negative or excessive ignored seconds are rejected clearly',()=>{for(const margins of [{trimStart:-1,trimEnd:0},{trimStart:0,trimEnd:-1},{trimStart:60,trimEnd:30}])assert.throws(()=>planSegments(90,{mode:'single',duration:30,...margins}));});
+test('90 second video with 70 useful seconds enables 30 second selection',()=>{assert.equal(timelineBounds(90,30,10,10).valid,true);assert.equal(timelineBounds(90,30,10,10).max,50);});
+test('an additional end constraint explains the real available interval',()=>{const range=timelineBounds(90,30,10,10,'0');assert.equal(range.valid,false);assert.equal(range.useful,0);});
+test('timeline supports zero margins and custom margins consistently with exporter',()=>{assert.deepEqual(timelineBounds(90,30,0,0),{min:0,last:90,max:60,useful:90,valid:true});assert.deepEqual(timelineBounds(90,30,5,3),{min:5,last:87,max:57,useful:82,valid:true});});

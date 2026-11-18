@@ -2,14 +2,16 @@ import {drawWatermark} from './watermark.js';
 import {zipSync} from 'fflate';
 
 // Native media pipeline: no WASM, remote encoder or video upload.
-export function planSegments(total,{mode,count,clipDuration,start,end,duration,selections}) {
+export function planSegments(total,{mode,count,clipDuration,start,end,duration,selections,trimStart=10,trimEnd=10}) {
   if(!Number.isFinite(total))throw Error('Não consegui ler a duração do vídeo. Em “Enviar vídeo”, selecione o arquivo novamente e aguarde a prévia carregar. Se a prévia não abrir, tente outro arquivo MP4.');
-  if(total<=20)throw Error('Seu vídeo tem '+total.toFixed(1)+' segundos. Os primeiros 10 e os últimos 10 segundos são ignorados, então não sobra espaço para cortar. Selecione um vídeo de pelo menos 50 segundos para gerar um corte de 30 segundos.');
+  const ignoredStart=Number(trimStart),ignoredEnd=Number(trimEnd);
+  if(!Number.isFinite(ignoredStart)||!Number.isFinite(ignoredEnd)||ignoredStart<0||ignoredEnd<0)throw Error('Em “Ignorar no início” e “Ignorar no final”, digite uma quantidade de segundos igual ou maior que 0. Use 0 para não ignorar nada.');
+  if(total<=ignoredStart+ignoredEnd)throw Error('Seu vídeo tem '+total.toFixed(1)+'s, mas você escolheu ignorar '+ignoredStart+'s do início e '+ignoredEnd+'s do final. Reduza esses dois valores; use 0 e 0 para aproveitar o vídeo completo.');
   if(!['single','batch'].includes(mode))throw Error('Modo de corte inválido.');
-  const first=Math.max(10,start==null||start===''?10:Number(start));
-  const last=Math.min(total-10,end==null||end===''?total-10:Number(end));
+  const first=Math.max(ignoredStart,start==null||start===''?ignoredStart:Number(start));
+  const last=Math.min(total-ignoredEnd,end==null||end===''?total-ignoredEnd:Number(end));
   if(!Number.isFinite(first)||!Number.isFinite(last)||first>=last){
-    const error=Error('O início e o final escolhidos não formam um intervalo para cortar.\nSeu vídeo tem '+total.toFixed(1)+' segundos. Depois de ignorar 10 segundos de cada ponta, você pode usar de 10 até '+(total-10).toFixed(1)+' segundos.\nValores preenchidos: “Começar em” = '+(start==null||start===''?'vazio':String(start))+'; “Terminar em” = '+(end==null||end===''?'vazio (automático)':String(end))+'.\nComo corrigir:\n1. Em “Começar em (segundos)”, digite 10.\n2. Em “Terminar em (segundos, opcional)”, apague o valor e deixe vazio.\n3. Confira a quantidade e a duração dos clipes e clique em “Gerar clipes” novamente.\nVocê também pode clicar em “Usar intervalo completo permitido” abaixo.');
+    const error=Error('O início e o final escolhidos não formam um intervalo para cortar.\nSeu vídeo tem '+total.toFixed(1)+' segundos. Depois de ignorar '+ignoredStart+'s do início e '+ignoredEnd+'s do final, você pode usar de '+ignoredStart+' até '+(total-ignoredEnd).toFixed(1)+' segundos.\nValores preenchidos: “Começar em” = '+(start==null||start===''?'vazio':String(start))+'; “Terminar em” = '+(end==null||end===''?'vazio (automático)':String(end))+'.\nComo corrigir:\n1. Em “Começar em (segundos)”, digite '+ignoredStart+'.\n2. Em “Terminar em (segundos, opcional)”, apague o valor e deixe vazio.\n3. Confira a quantidade e a duração dos clipes e clique em “Gerar clipes” novamente.\nVocê também pode clicar em “Usar intervalo completo permitido” abaixo.');
     error.resetRange=true;throw error;
   }
   const length=Number(mode==='single'?duration:clipDuration);
@@ -27,7 +29,7 @@ export function planSegments(total,{mode,count,clipDuration,start,end,duration,s
   if(limit*length>last-first+1e-6){
     const available=last-first,capacity=Math.floor(available/length);
     const alternatives=[30,45,60].filter(seconds=>limit*seconds<=available+1e-6);
-    throw Error('Você pediu '+limit+' clipe(s) de '+length+'s: são necessários '+(limit*length)+'s.\nO intervalo escolhido vai de '+first.toFixed(1)+'s até '+last.toFixed(1)+'s, tem '+available.toFixed(1)+'s úteis e comporta '+capacity+' clipe(s) de '+length+'s.\nComo corrigir:\n'+(capacity>0?'• Em “Quantidade de clipes”, escolha '+capacity+' ou menos, mantendo '+length+' segundos.':'• Este intervalo não comporta nem 1 clipe de '+length+'s. Escolha uma duração menor ou um vídeo mais longo.')+'\n'+(alternatives.length?'• Para manter '+limit+' clipe(s), em “Duração de cada clipe automático”, escolha '+alternatives.join(' ou ')+' segundos.':'• Para manter essa quantidade e duração, selecione um vídeo maior ou amplie o intervalo usando “Começar em” = 10 e “Terminar em” vazio.')+'\nA duração dos cortes não será encurtada automaticamente.');
+    throw Error('Você pediu '+limit+' clipe(s) de '+length+'s: são necessários '+(limit*length)+'s.\nO intervalo escolhido vai de '+first.toFixed(1)+'s até '+last.toFixed(1)+'s, tem '+available.toFixed(1)+'s úteis e comporta '+capacity+' clipe(s) de '+length+'s.\nComo corrigir:\n'+(capacity>0?'• Em “Quantidade de clipes”, escolha '+capacity+' ou menos, mantendo '+length+' segundos.':'• Este intervalo não comporta nem 1 clipe de '+length+'s. Escolha uma duração menor ou um vídeo mais longo.')+'\n'+(alternatives.length?'• Para manter '+limit+' clipe(s), em “Duração de cada clipe automático”, escolha '+alternatives.join(' ou ')+' segundos.':'• Para manter essa quantidade e duração, selecione um vídeo maior ou amplie o intervalo usando “Começar em” = '+ignoredStart+' e “Terminar em” vazio. Você também pode reduzir “Ignorar no início” e “Ignorar no final”.')+'\nA duração dos cortes não será encurtada automaticamente.');
   }
   return Array.from({length:limit},(_,i)=>({start:first+i*length,length}));
 }
@@ -136,7 +138,7 @@ export async function cutLocally(file,options,status=()=>{},signal=new AbortCont
     const entries={};
     for(const item of files)entries[item.name]=new Uint8Array(await item.blob.arrayBuffer());
     const archive=zipSync(entries,{level:0});
-    return {blob:new Blob([archive],{type:'application/zip'}),files,zip:true,extension:format.extension,notice:'Os primeiros e últimos 10 segundos foram excluídos. Duração escolhida preservada.'};
+    return {blob:new Blob([archive],{type:'application/zip'}),files,zip:true,extension:format.extension,notice:'Os segundos que você escolheu ignorar foram excluídos. Duração escolhida preservada.'};
   } catch(error) {
     if(controller.signal.aborted)throw new DOMException(document.hidden?'O corte parou porque a aba ficou oculta. Volte para a aba do ViralClip, clique em “Gerar clipes” novamente e mantenha-a visível até terminar.':'Corte cancelado.','AbortError');
     throw error;
@@ -148,6 +150,7 @@ export async function cutLocally(file,options,status=()=>{},signal=new AbortCont
     URL.revokeObjectURL(url);signal.removeEventListener('abort',abort);document.removeEventListener('visibilitychange',visibility);busy=false;
   }
 }
+
 
 
 
