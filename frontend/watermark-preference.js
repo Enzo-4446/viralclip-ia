@@ -1,10 +1,11 @@
-export const DEFAULT_WATERMARK='GTA.VI.VIRAL';
+export const DEFAULT_WATERMARK='@GTA.VI.RAL';
 export function rememberWatermark({sb,input,preset,status,storage=globalThis.localStorage}) {
   let userId=null,timer=null,version=0,applying=false,writes=Promise.resolve();
   const key=id=>'viralclip.watermark.v1.'+id;
   const read=id=>{try{return JSON.parse(storage.getItem(key(id))||'null');}catch{return null;}};
   const cache=(id,value,updatedAt)=>{try{storage.setItem(key(id),JSON.stringify({value,updatedAt}));}catch{}};
-  const apply=value=>{applying=true;input.value=value;input.dispatchEvent(new Event('input'));applying=false;};
+  const correct=value=>['GTA.VI.VIRAL','GTA.VI.RAL','@GTA.VI.VIRAL'].includes(value)?DEFAULT_WATERMARK:value;
+  const apply=value=>{applying=true;input.value=correct(value);input.dispatchEvent(new Event('input'));applying=false;};
   function save(){
     clearTimeout(timer);
     const value=input.value.trim().slice(0,32),id=userId,updatedAt=Date.now(),editVersion=version;
@@ -36,8 +37,8 @@ export function rememberWatermark({sb,input,preset,status,storage=globalThis.loc
       if(userId!==id||snapshot!==version)return;
       const remote=user.user_metadata||{},remoteTime=Number(remote.viralclip_watermark_updated_at)||0;
       if(local?.value&&Number(local.updatedAt)>remoteTime){apply(local.value);save();}
-      else if(remote.viralclip_watermark){apply(remote.viralclip_watermark);cache(id,remote.viralclip_watermark,remoteTime);status.textContent='Última marca restaurada da sua conta.';}
-      else {apply(DEFAULT_WATERMARK);status.textContent='GTA.VI.VIRAL disponível como sugestão. Sua última marca será lembrada automaticamente.';}
+      else if(remote.viralclip_watermark){apply(remote.viralclip_watermark);cache(id,correct(remote.viralclip_watermark),remoteTime);if(correct(remote.viralclip_watermark)!==remote.viralclip_watermark)save();status.textContent='Última marca restaurada da sua conta.';}
+      else {apply(DEFAULT_WATERMARK);status.textContent='@GTA.VI.RAL disponível como sugestão. Sua última marca será lembrada automaticamente.';}
     }catch{if(userId===id&&snapshot===version)status.textContent='Última marca restaurada neste navegador. Entre com a mesma conta para sincronizar entre dispositivos.';}
   },flush:save,settled:()=>writes};
 }

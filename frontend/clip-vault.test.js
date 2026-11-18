@@ -34,7 +34,7 @@ test('last custom watermark restores on another device and GTA preset stays avai
   const ipadInput=new Input(),ipadPreset={};
   const ipad=rememberWatermark({sb,input:ipadInput,preset:ipadPreset,status:{},storage:makeStorage()});
   await ipad.restore(session);assert.equal(ipadInput.value,'MINHA MARCA');
-  ipadPreset.onclick();await ipad.settled();assert.equal(ipadInput.value,'GTA.VI.VIRAL');assert.equal(remote.user_metadata.viralclip_watermark,'GTA.VI.VIRAL');
+  ipadPreset.onclick();await ipad.settled();assert.equal(ipadInput.value,'@GTA.VI.RAL');assert.equal(remote.user_metadata.viralclip_watermark,'@GTA.VI.RAL');
 });
 
 import {attachClipSharing} from './share-clip.js';
