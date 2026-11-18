@@ -4,6 +4,7 @@ on:
     branches: [main]
     paths:
       - 'frontend/**'
+      - 'backend/**'
       - '.github/workflows/validate.yml'
   workflow_dispatch:
 permissions:
@@ -24,6 +25,10 @@ jobs:
       - name: Run tests
         working-directory: frontend
         run: npm test
+      - name: Validate backend security gate
+        run: |
+          python -m py_compile backend/app.py
+          python -m pytest -q backend/test_commercial_gate.py
       - name: Production build
         working-directory: frontend
         run: npm run build
