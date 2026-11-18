@@ -1,0 +1,3 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {createTemporaryClips,CLIP_TTL_MS} from './temporary-clips.js';
+test('keeps output before 30 minutes and revokes after',()=>{let t=100;const revoked=[];const c=createTemporaryClips({now:()=>t,revoke:u=>revoked.push(u)});c.track('blob:one');t+=CLIP_TTL_MS-1;assert.equal(c.sweep(),0);t++;assert.equal(c.sweep(),1);assert.deepEqual(revoked,['blob:one']);});
+test('clears all object URLs',()=>{const revoked=[];const c=createTemporaryClips({revoke:u=>revoked.push(u)});c.track('blob:a');c.track('blob:b');c.clear();assert.equal(c.size(),0);assert.equal(revoked.length,2);});
