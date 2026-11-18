@@ -1,6 +1,10 @@
 name: Deploy ViralClip IA frontend
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/pages.yml'
 permissions:
   contents: read
   pages: write
@@ -19,16 +23,22 @@ jobs:
           node-version: '22'
       - name: Install
         working-directory: frontend
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
       - name: Test local segment planning
         working-directory: frontend
         run: npm test
+      - name: Verify backend security gate
+        run: |
+          python -m py_compile backend/app.py
+          python -m pip install --disable-pip-version-check pytest
+          python -m pytest -q backend/test_commercial_gate.py
       - name: Build
         working-directory: frontend
         env:
           VITE_SUPABASE_URL: https://zltpldhnaqiqkoqdiugp.supabase.co
           VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_rfDyhC0aRYFk4QEnm3py1A_se2B2pJi
           VITE_API_URL: ${{ vars.VITE_API_URL }}
+          VITE_COMMERCIAL_WALLET_ENABLED: 'false'
         run: npm run build
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
