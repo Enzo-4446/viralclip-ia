@@ -1,4 +1,6 @@
 import {rememberWatermark} from './watermark-preference.js';
+import {createTemporaryClips} from './temporary-clips.js';
+import {friendlyError} from './friendly-errors.js';
 import {mountVersionNotice} from './app-version.js';
 import {createClipVault} from './clip-vault.js';
 import '@fontsource-variable/manrope';
@@ -59,14 +61,14 @@ async function generateLocal(f,title,session){
     clearResults();
     for(const item of result.files){
       const blob=item.blob;
-      const url=URL.createObjectURL(blob);resultUrls.push(url);
+      const url=URL.createObjectURL(blob);resultUrls.push(temporaryClips.track(url));
       const card=document.createElement('div'),video=document.createElement('video'),p=document.createElement('p'),link=document.createElement('a');
       video.src=url;video.controls=true;video.playsInline=true;video.preload='none';
       p.textContent=item.name;link.href=url;link.download=item.name;link.textContent='Baixar '+result.extension.toUpperCase();
       card.className='result-card';card.append(video,p,link);$('results').append(card);
     }
     if(result.blob){
-      const url=URL.createObjectURL(result.blob);resultUrls.push(url);
+      const url=URL.createObjectURL(result.blob);resultUrls.push(temporaryClips.track(url));
       $('download').href=url;$('download').download=result.zip?'viralclip_cortes.zip':'viralclip.'+result.extension;
       $('download').textContent=result.zip?'Baixar todos em ZIP':'Baixar '+result.extension.toUpperCase();$('download').hidden=false;
     }else{$('download').hidden=true;}
@@ -76,7 +78,7 @@ async function generateLocal(f,title,session){
     const {error}=await sb.from('clip_projects').insert({user_id:session.user.id,title,watermark_text:$('watermark').checked?$('brand').value.trim():'',rights_confirmed:true,source_kind:'upload'});
     if(error)console.warn('Histórico:',error.message);
     await loadProjects();
-  }catch(e){status('Não foi possível concluir.\n\n'+(e?.message||String(e)||'Tente selecionar o vídeo novamente.'));$('resetClipRange').hidden=!e?.resetRange;console.error(e)}
+  }catch(e){status('Não foi possível concluir.\n\n'+(e?.resetRange?e.message:friendlyError(e)));$('resetClipRange').hidden=!e?.resetRange;console.error(e)}
   finally{localBusy=false;localController=null;manualTimeline?.setBusy(false);$('cancelLocal').hidden=true;updateGenerateState()}
 }
 $('cancelLocal').onclick=()=>localController?.abort();
@@ -118,7 +120,7 @@ const fd=new FormData();if(sourceMode==='youtube'){fd.append('url',$('youtubeUrl
  }else{
    r=await fetch(api+'/clips/youtube',{method:'POST',headers:{Authorization:'Bearer '+session.access_token},body:fd,signal:controller.signal});
  }
-}finally{clearTimeout(timeout)}if(!r.ok){const e=await r.json().catch(()=>({}));throw Error(e.detail||'Erro '+r.status)}const blob=await r.blob();clearResults();if(sourceMode==='youtube'||$('mode').value==='batch'){try{const entries=unzipSync(new Uint8Array(await blob.arrayBuffer()));const clips=Object.keys(entries).filter(name=>name.endsWith('.mp4')).sort();for(const [index,name] of clips.entries()){const videoBlob=new Blob([entries[name]],{type:'video/mp4'});const url=URL.createObjectURL(videoBlob);resultUrls.push(url);const card=document.createElement('div');card.className='result-card';const video=document.createElement('video');video.src=url;video.controls=true;video.playsInline=true;video.preload='none';const title=document.createElement('p');title.textContent='Clipe '+String(index+1).padStart(2,'0');const link=document.createElement('a');link.href=url;link.download=name;link.textContent='Baixar MP4';card.append(video,title,link);$('results').append(card)}if(clips.length===0)throw Error('ZIP sem vídeos');$('status').textContent=clips.length+' clipes prontos. Baixe individualmente ou todos em ZIP.'}catch(e){$('status').textContent='ZIP gerado, mas não foi possível abrir as prévias: '+e.message}}$('download').href=URL.createObjectURL(blob);$('download').download=(sourceMode==='youtube'||$('mode').value==='batch')?'viralclip_cortes.zip':'viralclip.mp4';$('download').textContent=(sourceMode==='youtube'||$('mode').value==='batch')?'Baixar cortes em ZIP':'Baixar MP4';$('download').hidden=false;if(sourceMode!=='youtube'&&$('mode').value==='single'){$('status').textContent='Clipe pronto para baixar.';const url=$('download').href;const card=document.createElement('div');card.className='result-card';const video=document.createElement('video');video.src=url;video.controls=true;video.playsInline=true;card.append(video);$('results').append(card)}const cloudFiles=[];if(sourceMode==='youtube'||$('mode').value==='batch'){const entries=unzipSync(new Uint8Array(await blob.arrayBuffer()));for(const [name,bytes] of Object.entries(entries))if(/\.(mp4|webm)$/i.test(name))cloudFiles.push({name,blob:new Blob([bytes],{type:name.endsWith('.webm')?'video/webm':'video/mp4'})});}else cloudFiles.push({name:'viralclip.mp4',blob});if(cloudFiles.length)await vault.saveFiles(cloudFiles,title,session.user.id);const {error:historyError}=await sb.from('clip_projects').insert({user_id:session.user.id,title,watermark_text:brand,rights_confirmed:true,source_kind:sourceMode==='youtube'?'youtube':'upload'});if(historyError)console.warn('Histórico não salvo:',historyError.message);await loadProjects()}catch(e){$('status').textContent=e?.name==='AbortError'?'O processamento ultrapassou o tempo limite. Tente 1 corte em 720p, 30 FPS, sem legendas. Nenhum histórico foi salvo.':e instanceof TypeError?'Falha de rede ao comunicar com o Render. Pode ser serviço suspenso, deploy com erro, conexão interrompida ou CORS. Confira o status em '+api+'/health e os logs no Render.':(e?.message||String(e)||'Erro desconhecido')}finally{updateGenerateState()}};
+}finally{clearTimeout(timeout)}if(!r.ok){const e=await r.json().catch(()=>({}));throw Error(e.detail||'Erro '+r.status)}const blob=await r.blob();clearResults();if(sourceMode==='youtube'||$('mode').value==='batch'){try{const entries=unzipSync(new Uint8Array(await blob.arrayBuffer()));const clips=Object.keys(entries).filter(name=>name.endsWith('.mp4')).sort();for(const [index,name] of clips.entries()){const videoBlob=new Blob([entries[name]],{type:'video/mp4'});const url=URL.createObjectURL(videoBlob);resultUrls.push(temporaryClips.track(url));const card=document.createElement('div');card.className='result-card';const video=document.createElement('video');video.src=url;video.controls=true;video.playsInline=true;video.preload='none';const title=document.createElement('p');title.textContent='Clipe '+String(index+1).padStart(2,'0');const link=document.createElement('a');link.href=url;link.download=name;link.textContent='Baixar MP4';card.append(video,title,link);$('results').append(card)}if(clips.length===0)throw Error('ZIP sem vídeos');$('status').textContent=clips.length+' clipes prontos. Baixe individualmente ou todos em ZIP.'}catch(e){$('status').textContent='ZIP gerado, mas não foi possível abrir as prévias: '+e.message}}$('download').href=URL.createObjectURL(blob);$('download').download=(sourceMode==='youtube'||$('mode').value==='batch')?'viralclip_cortes.zip':'viralclip.mp4';$('download').textContent=(sourceMode==='youtube'||$('mode').value==='batch')?'Baixar cortes em ZIP':'Baixar MP4';$('download').hidden=false;if(sourceMode!=='youtube'&&$('mode').value==='single'){$('status').textContent='Clipe pronto para baixar.';const url=$('download').href;const card=document.createElement('div');card.className='result-card';const video=document.createElement('video');video.src=url;video.controls=true;video.playsInline=true;card.append(video);$('results').append(card)}const cloudFiles=[];if(sourceMode==='youtube'||$('mode').value==='batch'){const entries=unzipSync(new Uint8Array(await blob.arrayBuffer()));for(const [name,bytes] of Object.entries(entries))if(/\.(mp4|webm)$/i.test(name))cloudFiles.push({name,blob:new Blob([bytes],{type:name.endsWith('.webm')?'video/webm':'video/mp4'})});}else cloudFiles.push({name:'viralclip.mp4',blob});if(cloudFiles.length)await vault.saveFiles(cloudFiles,title,session.user.id);const {error:historyError}=await sb.from('clip_projects').insert({user_id:session.user.id,title,watermark_text:brand,rights_confirmed:true,source_kind:sourceMode==='youtube'?'youtube':'upload'});if(historyError)console.warn('Histórico não salvo:',historyError.message);await loadProjects()}catch(e){$('status').textContent=e?.name==='AbortError'?'O processamento ultrapassou o tempo limite. Tente 1 corte em 720p, 30 FPS, sem legendas. Nenhum histórico foi salvo.':e instanceof TypeError?'Falha de rede ao comunicar com o Render. Pode ser serviço suspenso, deploy com erro, conexão interrompida ou CORS. Confira o status em '+api+'/health e os logs no Render.':(e?.message||String(e)||'Erro desconhecido')}finally{updateGenerateState()}};
 sb.auth.onAuthStateChange((event)=>{if(event==='PASSWORD_RECOVERY'){recoveryMode=true;$('auth').hidden=false;$('app').hidden=true;$('resetBox').hidden=false;$('authStatus').textContent='Informe uma nova senha para concluir a recuperação.';return}if(!recoveryMode)setTimeout(refresh,0)});refresh();
 
 $('mode').onchange=()=>{$('generate').textContent=$('mode').value==='batch'?'Gerar clipes':'Cortar seleção manual';$('start').disabled=false;$('duration').disabled=$('mode').value==='batch';$('download').hidden=true};$('mode').onchange();
@@ -136,7 +138,12 @@ const updateEditor=()=>{if(localEngine()){$('processingEngine').onchange();retur
 editorFields.forEach(id=>$(id).addEventListener('change',updateEditor));updateEditor();
 
 let resultUrls=[];
-const clearResults=()=>{for(const url of resultUrls)URL.revokeObjectURL(url);resultUrls=[];$('results').replaceChildren()};
+const temporaryClips=createTemporaryClips();
+const clearResults=()=>{temporaryClips.clear();resultUrls=[];$('results').replaceChildren();$('download').hidden=true;};
+const sweepTemporaryClips=()=>{if(!temporaryClips.sweep())return;clearResults();$('status').textContent='Os clipes temporários completaram 30 minutos e foram removidos deste navegador. Gere novamente se precisar de outra cópia.';};
+setInterval(sweepTemporaryClips,60000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)sweepTemporaryClips();});
+window.addEventListener('focus',sweepTemporaryClips);
 $('watermark').addEventListener('change',()=>{$('brand').disabled=!$('watermark').checked;updateEditor()});$('watermark').dispatchEvent(new Event('change'));
 $('count').addEventListener('change',updateEditor);$('clipDuration').addEventListener('change',updateEditor);$('aspect').addEventListener('change',updateEditor);
 const oldModeChange=$('mode').onchange;$('mode').onchange=()=>{oldModeChange();$('count').disabled=$('mode').value==='single';$('clipDuration').disabled=$('mode').value==='single';clearResults()};$('mode').onchange();
