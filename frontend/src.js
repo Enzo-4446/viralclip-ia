@@ -8,6 +8,7 @@ import {mountVersionNotice} from './app-version.js';
 import {createClipVault} from './clip-vault.js';
 import '@fontsource-variable/manrope';
 import {mountTimeline} from './timeline.js';
+import {mountLocalHelper} from './local-helper.js';
 import {cutLocally,planSegments} from './local-cutter.js';
 import {unzipSync} from 'fflate';
 import {createClient} from '@supabase/supabase-js';
@@ -40,7 +41,8 @@ const checkVersion=mountVersionNotice({root:document.querySelector('main'),versi
 checkVersion();window.addEventListener('focus',checkVersion);setInterval(checkVersion,120000);
 let sourceMode='upload';let localPreviewUrl=null;let importedYoutubeFile=null;
 const setSourceMode=mode=>{if(localBusy)return;sourceMode=mode;$('youtubePanel').hidden=mode!=='youtube';$('uploadPanel').hidden=mode!=='upload';$('tabYoutube').classList.toggle('active',mode==='youtube');$('tabUpload').classList.toggle('active',mode==='upload');$('status').textContent='';$('download').hidden=true;const engine=$('processingEngine');if(engine){engine.disabled=mode==='youtube';$('localNote').textContent=mode==='youtube'?'Links do YouTube usam o servidor. Para corte local, envie um arquivo MP4 do computador.':engine.value==='local'?'O vídeo é cortado neste dispositivo. Os clipes permanecem somente neste navegador por até 30 minutos.':'Edição avançada: o vídeo será enviado ao servidor Render.';}updateGenerateState()};
-$('tabYoutube').onclick=()=>setSourceMode('youtube');$('tabUpload').onclick=()=>setSourceMode('upload');
+$('tabYoutube').onclick=()=>setSourceMode('youtube');
+mountLocalHelper({getUrl:()=> $('youtubeUrl').value.trim(),rightsChecked:()=> $('rights').checked});$('tabUpload').onclick=()=>setSourceMode('upload');
 $('youtubeUseFile').onclick=()=>{setSourceMode('upload');$('file').focus();$('status').textContent='Selecione um arquivo de vídeo autorizado para continuar com os cortes automáticos.';};
 const youtubeId=url=>{try{const u=new URL(url);const h=u.hostname.toLowerCase();if(h==='youtu.be'||h==='www.youtu.be')return u.pathname.split('/')[1]?.match(/^[a-zA-Z0-9_-]{11}$/)?.[0]||null;if(['youtube.com','www.youtube.com','m.youtube.com','music.youtube.com'].includes(h)){const id=u.pathname==='/watch'?u.searchParams.get('v'):u.pathname.match(/^\/(?:shorts|live|embed)\/([a-zA-Z0-9_-]{11})/)?.[1];return id&&/^[a-zA-Z0-9_-]{11}$/.test(id)?id:null}}catch{}return null};
 $('inspectYoutube').onclick=()=>{const id=youtubeId($('youtubeUrl').value.trim());if(!id){$('youtubeInfo').textContent='Link inválido. Cole uma URL de vídeo, Shorts ou live do YouTube.';return}if(localPreviewUrl){URL.revokeObjectURL(localPreviewUrl);localPreviewUrl=null}const iframe=document.createElement('iframe');iframe.src='https://www.youtube-nocookie.com/embed/'+encodeURIComponent(id);iframe.title='Prévia do YouTube';iframe.allow='accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture';iframe.allowFullscreen=true;iframe.style.cssText='width:100%;height:100%;border:0';$('videoPreview').replaceChildren(iframe);$('youtubeInfo').textContent='Vídeo identificado: '+id+'. Prévia disponível quando o YouTube permitir incorporação. Para gerar, confirme os direitos de edição e escolha suas configurações. A disponibilidade depende das restrições do YouTube.'};
