@@ -51,6 +51,8 @@ export function mountTimeline({preview,root,mode,duration,start,end,watermark,br
     $('timelineDuration').disabled=busy;
     $('addSelection').disabled=!valid||busy||queue.length>=10;
     $('cutSelection').textContent=queue.length?'Cortar '+queue.length+' trechos de '+length()+'s':'Cortar trecho de '+length()+'s';
+    $('manualQueueCount').textContent=queue.length+'/10';
+    for(const id of ['nudgeBackOne','nudgeBackFrame','nudgeForwardFrame','nudgeForwardOne'])$(id).disabled=!valid||busy;
     const signature=queue.map(x=>x.start).join(',')+'|'+length()+'|'+busy;
     if(signature!==queueSignature){queueSignature=signature;$('selectionQueue').replaceChildren();
     queue.forEach((item,index)=>{const row=document.createElement('div');row.className='queued-cut';const text=document.createElement('span');text.textContent=(index+1)+'. '+fmt(item.start)+' → '+fmt(item.start+length());const remove=document.createElement('button');remove.type='button';remove.textContent='Remover';remove.disabled=busy;remove.onclick=()=>{queue.splice(index,1);render();};row.append(text,remove);$('selectionQueue').append(row);});}
@@ -64,6 +66,9 @@ export function mountTimeline({preview,root,mode,duration,start,end,watermark,br
     if(video){const ready=()=>{total=video.duration;end.value='';start.value='';selected=Math.max(0,Number(trimStart.value)||0);render();resizeMark();if(bounds().valid)video.currentTime=selected;video.dispatchEvent(new Event('cliprangechange'));};video.addEventListener('loadedmetadata',ready);video.addEventListener('play',animateMark);video.addEventListener('pause',()=>{stopMark();paintMark();});video.addEventListener('seeked',paintMark);video.addEventListener('timeupdate',()=>{if(playing&&video.currentTime>=selected+length()){video.pause();playing=false;}});if(video.readyState>=1)ready();preview.append(overlay);}else overlay.remove();render();
   }
   $('selectionStart').oninput=e=>choose(e.target.value);
+  for(const [id,delta] of [['nudgeBackOne',-1],['nudgeBackFrame',-.1],['nudgeForwardFrame',.1],['nudgeForwardOne',1]]){
+    $(id).onclick=()=>{if(!bounds().valid||busy)return;choose(Math.round((selected+delta)*10)/10);};
+  }
   let dragging=false,anchor=0;
   const track=$('selectionTrack');
   track.onpointerdown=e=>{if(busy||!bounds().valid)return;const rect=track.getBoundingClientRect(),time=(e.clientX-rect.left)/rect.width*total;anchor=time>=selected&&time<=selected+length()?time-selected:length()/2;dragging=true;track.setPointerCapture(e.pointerId);choose(time-anchor);};
