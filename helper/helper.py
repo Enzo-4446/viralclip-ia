@@ -114,7 +114,9 @@ def run_job(job_id, url, settings):
     except Exception:
         update(job_id, state="error", message="Falha inesperada no processamento.")
     finally:
-        (work / "source.mp4").unlink(missing_ok=True)
+        for temporary in work.glob("source.*"):
+            if temporary.is_file():
+                temporary.unlink(missing_ok=True)
 
 @app.post("/jobs", status_code=202)
 def create_job(body: JobBody, authorization: str | None = Header(default=None)):
@@ -173,7 +175,10 @@ def open_folder(authorization: str | None = Header(default=None)):
 
 if __name__ == "__main__":
     import socket
-    port = next((p for p in PORTS if socket.socket().connect_ex((HOST, p)) != 0), None)
+    def port_available(port):
+        with socket.socket() as sock:
+            return sock.connect_ex((HOST, port)) != 0
+    port = next((p for p in PORTS if port_available(p)), None)
     if port is None:
         raise SystemExit("Nenhuma porta disponível")
     print("\nVIRAL IA HELPER")
