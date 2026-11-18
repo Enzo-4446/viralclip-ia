@@ -190,12 +190,50 @@ async def batch_clips(file: UploadFile = File(...), brand: str = Form("VIRALCLIP
 # Optional YouTube input for videos that the uploader owns or is authorized to process.
 # Public YouTube streams are not guaranteed accessible on hosted servers.
 def youtube_pot_args():
-    """Official yt-dlp mweb + BgUtils script provider (no extra public port)."""
+    """Use the installed yt-dlp PO-token provider when available."""
     script="/opt/bgutil/server"
     if os.path.isfile(script+"/build/main.js"):
         return ["--extractor-args","youtube:player_client=mweb",
                 "--extractor-args","youtubepot-bgutilscript:server_home="+script]
     return []
+
+
+def youtube_error_kind(stderr):
+    """Classify restrictions without suggesting a successful human-check bypass."""
+    detail=(stderr or "").lower()
+    if any(k in detail for k in ("sign in", "not a bot", "confirm you", "cookies", "verify you are human")):
+        return "verification_required"
+    if any(k in detail for k in ("private video", "members-only", "age-restricted", "copyright", "not available in your country")):
+        return "restricted"
+    if any(k in detail for k in ("403", "429", "forbidden", "too many requests")):
+        return "rate_limited"
+    return "unavailable"
+
+
+def youtube_error_message(stderr):
+    kind=youtube_error_kind(stderr)
+    return {
+        "verification_required": "O YouTube exige verificação humana ou uma sessão autorizada. O servidor não pode concluir essa verificação automaticamente. Baixe seu vídeo pela sua conta e envie o MP4.",
+        "restricted": "O vídeo tem restrições de acesso. Utilize um arquivo obtido com autorização.",
+        "rate_limited": "O YouTube limitou o acesso deste servidor. Aguarde ou envie o MP4 autorizado.",
+        "unavailable": "O vídeo não pôde ser transferido. Confira se é público e acessível ou envie o MP4."
+    }[kind]
+
+
+def youtube_download_command(canonical, template, *, metadata=False):
+    """A bounded, public-video attempt with consistent extraction configuration."""
+    cmd=["yt-dlp","--js-runtimes","node","--no-playlist","--no-progress",
+         "--no-warnings","--socket-timeout","20","--retries","2",
+         "--fragment-retries","2"]
+    cmd.extend(youtube_pot_args())
+    if metadata:
+        cmd.extend(["--skip-download","--dump-single-json"])
+    else:
+        cmd.extend(["--max-filesize","500M","--match-filter","!is_live & !was_live",
+                    "-f","bv*[height<=720]+ba/b[height<=720]/b",
+                    "--merge-output-format","mp4","-o",template])
+    cmd.append(canonical)
+    return cmd
 
 @app.post("/clips/youtube")
 async def youtube_clips(url: str = Form(...), project_id: str = Form(""), brand: str = Form("VIRALCLIP"), settings: str = Form("{}"), rights_confirmed: bool = Form(False), user: dict = Depends(require_user)):
@@ -220,13 +258,12 @@ async def youtube_clips(url: str = Form(...), project_id: str = Form(""), brand:
     source_template=str(ROOT/(job+".source.%(ext)s"))
     try:
         # Restricted, single-item, bounded transfer. yt-dlp may fail when YouTube restricts access.
-        cmd=["yt-dlp","--js-runtimes","node","--no-playlist","--no-progress","--no-warnings","--max-filesize","500M","--match-filter","!is_live & !was_live","--socket-timeout","20","--retries","2","--fragment-retries","2","--format","bestvideo[height<=720]+bestaudio/best[height<=720]/best","--merge-output-format","mp4","--output",source_template,canonical]
-        cmd[1:1]=youtube_pot_args()
+        cmd=youtube_download_command(canonical,source_template)
         try:
             p=await __import__("starlette.concurrency",fromlist=["run_in_threadpool"]).run_in_threadpool(lambda: subprocess.run(cmd,capture_output=True,text=True,timeout=240))
         except subprocess.TimeoutExpired: raise HTTPException(504,"O YouTube demorou demais para responder")
         if p.returncode:
-            raise HTTPException(422,("YouTube exigiu autenticação/verificação humana." if any(x in (p.stderr or "").lower() for x in ("sign in","bot","cookies","confirm you")) else "YouTube recusou o acesso (403/429)." if any(x in (p.stderr or "").lower() for x in ("403","429","forbidden")) else "Falha na transferência do YouTube.")+" Tente outro link ou envie um arquivo autorizado.")
+            raise HTTPException(422,youtube_error_message(p.stderr))
         candidates=[p for p in ROOT.glob(job+".source.*") if p.is_file() and not p.name.endswith((".part",".ytdl"))]
         if not candidates: raise HTTPException(422,"Arquivo de vídeo não encontrado após transferência")
         src=candidates[0]
@@ -251,15 +288,14 @@ async def check_youtube(url: str = Form(...), user: dict = Depends(require_user)
     if not video_id or not re.fullmatch(r"[A-Za-z0-9_-]{11}",video_id):
         raise HTTPException(400,"Identificador do vídeo inválido")
     canonical="https://www.youtube.com/watch?v="+video_id
-    cmd=["yt-dlp","--no-playlist","--skip-download","--dump-single-json","--no-warnings","--socket-timeout","12","--retries","1",canonical]
-    cmd[1:1]=youtube_pot_args()
+    cmd=youtube_download_command(canonical,None,metadata=True)
     try:
         result=await __import__("starlette.concurrency",fromlist=["run_in_threadpool"]).run_in_threadpool(lambda: subprocess.run(cmd,capture_output=True,text=True,timeout=40))
     except subprocess.TimeoutExpired:
         return {"status":"unknown","message":"O YouTube não respondeu no prazo. Você pode tentar gerar, mas o acesso não está confirmado."}
     if result.returncode:
         detail=(result.stderr or "").lower()
-        if any(k in detail for k in ("sign in","bot","cookies","confirm you")):
+        if youtube_error_kind(detail)=="verification_required":
             msg="O YouTube exigiu autenticação/verificação humana do servidor. A geração por link provavelmente falhará."
         elif "private" in detail or "unavailable" in detail:
             msg="Vídeo indisponível ou privado para este servidor."
@@ -291,8 +327,7 @@ async def youtube_download(url: str = Form(...), rights_confirmed: bool = Form(F
     prefix=job+".download."
     template=str(ROOT/(prefix+"%(ext)s"))
     canonical="https://www.youtube.com/watch?v="+video_id
-    cmd=["yt-dlp","--js-runtimes","node","--no-playlist","--no-progress","--no-warnings","--max-filesize","500M","--match-filter","!is_live & !was_live","--socket-timeout","20","--retries","1","--fragment-retries","1","-f","bv*[height<=720]+ba/b[height<=720]/b","--merge-output-format","mp4","-o",template,canonical]
-    cmd[1:1]=youtube_pot_args()
+    cmd=youtube_download_command(canonical,template)
     def cleanup():
         for item in ROOT.glob(prefix+"*"):
             if item.is_file(): item.unlink(missing_ok=True)
@@ -317,8 +352,8 @@ async def youtube_download(url: str = Form(...), rights_confirmed: bool = Form(F
         if proc.returncode:
             error=(proc.stderr or "").lower()
             if any(k in error for k in ("sign in","bot","cookies","confirm you")):
-                raise HTTPException(422,"O YouTube exige autenticação do servidor. A prévia incorporada não permite baixar o arquivo.")
-            raise HTTPException(422,"O YouTube não disponibilizou o vídeo para transferência neste servidor.")
+                raise HTTPException(422,youtube_error_message(proc.stderr))
+            raise HTTPException(422,youtube_error_message(proc.stderr))
         files=[p for p in ROOT.glob(prefix+"*") if p.is_file() and p.suffix==".mp4"]
         if not files:
             raise HTTPException(422,"Não foi possível produzir um arquivo MP4")
