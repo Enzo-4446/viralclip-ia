@@ -226,6 +226,8 @@ def youtube_download_command(canonical, template, *, metadata=False):
          "--no-warnings","--socket-timeout","20","--retries","2",
          "--fragment-retries","2"]
     cmd.extend(youtube_pot_args())
+    # Pace requests to reduce accidental throttling; never brute-force human checks.
+    cmd.extend(["--sleep-requests","1","--sleep-interval","2","--max-sleep-interval","4"])
     if metadata:
         cmd.extend(["--skip-download","--dump-single-json"])
     else:
