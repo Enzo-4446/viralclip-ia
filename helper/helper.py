@@ -3,6 +3,7 @@ import asyncio
 import hmac
 import json
 import os
+import sys
 import secrets
 import shutil
 import threading
@@ -35,6 +36,9 @@ JOBS = {}
 JOB_LOCK = threading.Lock()
 OUTPUT = Path.home() / "ViralIA"
 OUTPUT.mkdir(parents=True, exist_ok=True)
+if getattr(sys, "frozen", False):
+    bundled = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    os.environ["PATH"] = str(bundled) + os.pathsep + os.environ.get("PATH", "")
 
 app = FastAPI(title="VIRAL IA Helper", docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(
