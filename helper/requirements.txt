@@ -1,0 +1,6 @@
+fastapi>=0.115,<1
+uvicorn>=0.34,<1
+yt-dlp>=2026.10.26,<2027
+pytest>=8,<10
+httpx>=0.28,<1
+pyinstaller>=6,<7
