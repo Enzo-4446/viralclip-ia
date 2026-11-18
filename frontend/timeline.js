@@ -59,7 +59,7 @@ export function mountTimeline({preview,root,mode,duration,start,end,watermark,br
     if(valid&&mode.value==='single'&&document.activeElement!==start)start.value=selected.toFixed(2);
     paintMark();
   }
-  function choose(value,seek=true){if(busy||!video)return;selected=Number(value);render();if(seek&&bounds().valid){playing=false;video.pause();requestedSeek=selected;if(seekTimer==null)seekTimer=setTimeout(flushSeek,80);}}
+  function choose(value,seek=true){if(busy||!video)return;const limits=bounds();selected=limits.valid?Math.max(limits.min,Math.min(Number(value),limits.max)):Number(value);render();if(seek&&bounds().valid){playing=false;video.pause();requestedSeek=selected;if(seekTimer==null)seekTimer=setTimeout(flushSeek,80);}}
   function bindVideo(){
     const next=preview.querySelector('video');if(next===video)return;
     stopMark();clearTimeout(seekTimer);seekTimer=null;requestedSeek=null;video?.pause();video=next;queue=[];playing=false;total=0;selected=10;
@@ -80,7 +80,7 @@ export function mountTimeline({preview,root,mode,duration,start,end,watermark,br
   for(const input of [trimStart,trimEnd])input.addEventListener('input',()=>{queue=[];if(mode.value==='batch')start.value='';render();});
   $('resetManualRange').onclick=()=>{end.value='';queue=[];selected=Math.max(0,Number(trimStart.value)||0);start.value='';render();end.dispatchEvent(new Event('input'));if(bounds().valid)video.currentTime=selected;};
   $('previewSelection').onclick=async()=>{if(!video||busy)return;video.currentTime=selected;playing=true;try{await video.play();}catch{playing=false;}};
-  $('addSelection').onclick=()=>{if(queue.some(x=>Math.abs(x.start-selected)<.05))return;queue.push({start:selected});render();};
+  $('addSelection').onclick=()=>{if(!bounds().valid||busy||queue.length>=10||queue.some(x=>Math.abs(x.start-selected)<.05))return;queue.push({start:selected});render();};
   $('cutSelection').onclick=()=>{video?.pause();generate.click();};
   mode.addEventListener('change',render);engine.addEventListener('change',render);watermark.addEventListener('change',paintMark);brand.addEventListener('input',paintMark);
   new MutationObserver(bindVideo).observe(preview,{childList:true});new ResizeObserver(resizeMark).observe(preview);
